@@ -1,0 +1,12 @@
+credentials:
+  usernames:
+    admin:
+      email: admin@internal.local
+      name: Administrator
+      password: "$2b$12$m.fQkLoWN6MRxawESKFaO.xS9n9bIVJD7UJA0sF2DqyRBs.lqyLO2" # Hash for 'password123'
+cookie:
+  expiry_days: 30
+  key: pricelist_scanner_signature_key
+  name: pricelist_scanner_cookie
+preauthorized:
+  emails: []

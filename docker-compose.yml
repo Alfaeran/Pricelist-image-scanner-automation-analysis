@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  pricelist-scanner:
+    build: .
+    container_name: pricelist_scanner_app
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    environment:
+      # You can override this via .env file or host environment
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}

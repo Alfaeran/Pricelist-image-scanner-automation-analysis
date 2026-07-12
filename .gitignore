@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+env/
+
+# Secrets
+data/api_keys.json
+api_keys.json
+
+# IDEs
+.vscode/
+.idea/
+.gemini/
+
+# SQLite
+*.db
+*.sqlite3
+
+# Test Results
+data/chatbot_test_results.json
