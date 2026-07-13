@@ -420,6 +420,75 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# 4.5 Summary Insights Generator
+# ══════════════════════════════════════════════════════════════════════════════
+
+def generate_summary_insights(df: pd.DataFrame) -> dict[str, list[str]]:
+    """Generate best offer insights grouped by category.
+    
+    Returns a dict with two keys:
+    - 'sachet': list of best offers for SACHET categories
+    - 'monthly': list of best offers for MONTHLY categories
+    """
+    insights = {
+        "sachet": [],
+        "monthly": [],
+    }
+    
+    # Category mappings for display
+    category_labels = {
+        "SACHET 1D-2D": "1-2 days",
+        "SACHET 3D": "3 days",
+        "SACHET 5D": "5 days",
+        "SACHET 7D": "7 days",
+        "SACHET 10D-15D": ">10 days",
+        "MONTHLY 30-50K": "30K-50K",
+        "MONTHLY > 50K": ">100K",
+    }
+    
+    # Also add 50-100K if we have it
+    price_ranges = {
+        "MONTHLY 30-50K": "30K-50K",
+        "MONTHLY 50K-100K": "50K-100K",
+        "MONTHLY > 50K": ">100K",
+    }
+    
+    # Process SACHET categories
+    for cat in ["SACHET 1D-2D", "SACHET 3D", "SACHET 5D", "SACHET 7D", "SACHET 10D-15D"]:
+        cat_df = df[df["category"] == cat]
+        if not cat_df.empty:
+            # Find best deal (lowest yield)
+            best_idx = cat_df["yield_val"].idxmin()
+            best = cat_df.loc[best_idx]
+            
+            label = category_labels.get(cat, cat)
+            insight = f"{label:15} : {best['gb']:.0f}GB {best['price']:,} ({best['provider']})"
+            insights["sachet"].append(insight)
+    
+    # Process MONTHLY categories with a special case for 50-100K range
+    # Check if we have data in that range
+    monthly_df = df[df["category"].str.startswith("MONTHLY", na=False)]
+    
+    # Split by price range
+    monthly_30_50k = monthly_df[(monthly_df["price"] >= 30000) & (monthly_df["price"] <= 50000)]
+    monthly_50_100k = monthly_df[(monthly_df["price"] > 50000) & (monthly_df["price"] <= 100000)]
+    monthly_over_100k = monthly_df[monthly_df["price"] > 100000]
+    
+    for range_df, label in [
+        (monthly_30_50k, "30K-50K"),
+        (monthly_50_100k, "50K-100K"),
+        (monthly_over_100k, ">100K"),
+    ]:
+        if not range_df.empty:
+            best_idx = range_df["yield_val"].idxmin()
+            best = range_df.loc[best_idx]
+            insight = f"{label:15} : {best['gb']:.0f}GB {best['price']:,} ({best['provider']})"
+            insights["monthly"].append(insight)
+    
+    return insights
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # 5. Excel Generation (from notebook cells 389-546)
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -607,6 +676,38 @@ def generate_excel(df: pd.DataFrame) -> bytes:
         ws.column_dimensions[column_letter].width = max_length + 2
 
     ws.column_dimensions["A"].width = 15  # Fix category column width
+
+    # ── Generate Summary Insights (Notes Section) ─────────────────────────
+    insights = generate_summary_insights(df)
+    
+    # Add Notes section starting from a few rows below the data
+    notes_start_row = current_row + 3
+    
+    # Title
+    c_title = ws.cell(row=notes_start_row, column=1, value="NOTES:")
+    c_title.font = Font(bold=True, size=12, color="000000")
+    
+    # Subtitle 1: Best offer based on validity
+    notes_row = notes_start_row + 2
+    c_subtitle = ws.cell(row=notes_row, column=1, value="The best offer based on validity:")
+    c_subtitle.font = Font(bold=True, size=10)
+    
+    # List SACHET insights
+    notes_row += 1
+    for insight in insights["sachet"]:
+        ws.cell(row=notes_row, column=1, value=f"• {insight}")
+        notes_row += 1
+    
+    # Subtitle 2: Best offer monthly pack
+    notes_row += 1
+    c_subtitle2 = ws.cell(row=notes_row, column=1, value="The best offer monthly pack:")
+    c_subtitle2.font = Font(bold=True, size=10)
+    
+    # List MONTHLY insights
+    notes_row += 1
+    for insight in insights["monthly"]:
+        ws.cell(row=notes_row, column=1, value=f"• {insight}")
+        notes_row += 1
 
     # ── Save to bytes ─────────────────────────────────────────────────────
     buffer = io.BytesIO()
