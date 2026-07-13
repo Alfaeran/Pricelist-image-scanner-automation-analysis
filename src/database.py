@@ -31,7 +31,7 @@ import pandas as pd
 # Default database path — sits next to this module.
 # Override by passing a custom `db_path` to `Database(...)`.
 # ---------------------------------------------------------------------------
-_DEFAULT_DB_PATH = Path("data/package_history.db")
+_DEFAULT_DB_PATH = Path(__file__).parent.parent / "data" / "package_history.db"
 
 # ---------------------------------------------------------------------------
 # SQL Constants

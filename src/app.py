@@ -61,7 +61,7 @@ from model_router import (
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Pricelist Scanner",
-    page_icon="favicon.png",
+    page_icon=str(Path(__file__).parent.parent / "assets" / "favicon.png"),
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -465,7 +465,11 @@ div[data-testid="stAlert"] {
 # ──────────────────────────────────────────────────────────────────────────────
 # Authentication
 # ──────────────────────────────────────────────────────────────────────────────
-with open('auth_config.yaml') as file:
+import yaml
+from pathlib import Path
+
+config_path = Path(__file__).parent.parent / "config" / "auth_config.yaml"
+with open(config_path) as file:
     config = yaml.load(file, Loader=SafeLoader)
 
 authenticator = stauth.Authenticate(
@@ -514,7 +518,7 @@ _REGIONS = {
 # ══════════════════════════════════════════════════════════════════════════════
 from pathlib import Path
 
-API_KEYS_FILE = Path("data/api_keys.json")
+API_KEYS_FILE = Path(__file__).parent.parent / "data" / "api_keys.json"
 
 def load_saved_api_keys():
     if API_KEYS_FILE.exists():
@@ -701,12 +705,35 @@ with st.sidebar:
             else:
                 st.session_state[widget_key] = ""
                 
-        key_val = st.text_input(
-            f"API Key {i+1}" if st.session_state.num_api_keys > 1 else "Gemini API Key", 
-            type="password", 
-            key=widget_key,
-            help="Masukkan Gemini API key untuk OCR dan Chatbot." if i == 0 else None
-        )
+        # Use columns with vertical_alignment="bottom" to align button with input field automatically
+        col1, col2 = st.columns([5, 1], vertical_alignment="bottom")
+        
+        with col1:
+            key_val = st.text_input(
+                f"API Key {i+1}" if st.session_state.num_api_keys > 1 else "Gemini API Key", 
+                type="password", 
+                key=widget_key,
+                help="Masukkan Gemini API key untuk OCR dan Chatbot." if i == 0 else None,
+                label_visibility="collapsed"
+            )
+            
+        with col2:
+            if st.button("", icon=":material/delete:", key=f"del_key_{i}", help="Hapus API Key ini", use_container_width=True):
+                if st.session_state.num_api_keys == 1:
+                    # If only one input exists, just clear its value
+                    st.session_state[widget_key] = ""
+                else:
+                    # Shift all subsequent keys up by 1 index
+                    for j in range(i, st.session_state.num_api_keys - 1):
+                        next_key = f"api_key_input_dynamic_{j+1}"
+                        st.session_state[f"api_key_input_dynamic_{j}"] = st.session_state.get(next_key, "")
+                    # Delete the last redundant key
+                    last_key = f"api_key_input_dynamic_{st.session_state.num_api_keys - 1}"
+                    if last_key in st.session_state:
+                        del st.session_state[last_key]
+                    st.session_state.num_api_keys -= 1
+                st.rerun()
+                
         if key_val and key_val.strip():
             current_keys.append(key_val.strip())
 

@@ -15,12 +15,15 @@ import traceback
 from pathlib import Path
 from datetime import datetime
 
+# Add src to sys.path
+sys.path.append(str(Path(__file__).parent.parent / "src"))
+
 # Force stdout to UTF-8 to prevent 'charmap' encoding crashes on Windows console
 # when Langchain prints LLM scratchpads containing emojis/special characters.
 sys.stdout.reconfigure(encoding='utf-8')
 
 # Load API keys
-API_KEYS_FILE = Path("data/api_keys.json")
+API_KEYS_FILE = Path(__file__).parent.parent / "data" / "api_keys.json"
 def load_api_keys():
     if API_KEYS_FILE.exists():
         with open(API_KEYS_FILE, "r") as f:
@@ -272,7 +275,7 @@ def main():
         print(f"  {icon} #{r['id']:2d} [{r['category']:10s}] {r['status']:5s} ({r['model_used']}, {r['elapsed_s']}s)")
     
     # Save results to JSON
-    output_file = Path("data/chatbot_test_results.json")
+    output_file = Path(__file__).parent.parent / "data" / "chatbot_test_results.json"
     output_file.parent.mkdir(parents=True, exist_ok=True)
     with open(output_file, "w", encoding="utf-8") as f:
         json.dump({
