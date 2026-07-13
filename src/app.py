@@ -826,7 +826,7 @@ if app_mode == "Dashboard Input":
     # Page header with gradient
     st.markdown("""
         <div class="page-header">
-            <h1>📊 Dashboard Input Harga</h1>
+            <h1>Dashboard Input Harga</h1>
         </div>
     """, unsafe_allow_html=True)
     st.markdown(
@@ -1263,7 +1263,7 @@ elif app_mode == "Chatbot Analisis":
     with header_col1:
         st.markdown("""
             <div class="page-header">
-                <h1>💬 Chatbot Analisis AI</h1>
+                <h1>Chatbot Analisis AI</h1>
             </div>
         """, unsafe_allow_html=True)
         st.markdown(
