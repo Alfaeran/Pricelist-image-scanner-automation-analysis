@@ -21,6 +21,7 @@ import math
 import os
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -648,13 +649,13 @@ with st.sidebar:
     
     app_mode_raw = st.radio(
         "Pilih Halaman",
-        [":material/dashboard: Dashboard Input", ":material/smart_toy: Chatbot Analisis"],
+        [":material/dashboard: Dashboard Input", ":material/insights: Insight & Kompetisi", ":material/smart_toy: Chatbot Analisis"],
         key="app_mode_radio",
         label_visibility="collapsed"
     )
     
     # Strip the icon part to get the logical page name
-    app_mode = app_mode_raw.replace(":material/dashboard: ", "").replace(":material/smart_toy: ", "")
+    app_mode = app_mode_raw.replace(":material/dashboard: ", "").replace(":material/smart_toy: ", "").replace(":material/insights: ", "")
 
     st.divider()
 
@@ -931,7 +932,9 @@ if app_mode == "Dashboard Input":
                 
                 try:
                     if st.session_state.selected_model == "Auto (Smart Fallback)":
-                        # Use smart_invoke for automatic fallback
+                        # Rotate keys for round-robin load balancing
+                        rotated_keys = api_keys[key_index:] + api_keys[:key_index]
+                        
                         def _extract_fn(api_key, model_name):
                             pkgs, _ = extract_packages_gemini(
                                 image_bytes=preprocessed,
@@ -944,7 +947,7 @@ if app_mode == "Dashboard Input":
                         
                         result, used_model, used_key = smart_invoke(
                             invoke_fn=_extract_fn,
-                            api_keys=api_keys,
+                            api_keys=rotated_keys,
                             preferred_model=get_actual_model(),
                             router_state=router_state,
                             on_status=lambda msg: status_container.warning(msg),
@@ -954,10 +957,12 @@ if app_mode == "Dashboard Input":
                         )
                         all_packages.extend(result)
                         st.session_state.auto_resolved_model = used_model
+                        # Advance key_index to distribute load evenly
+                        key_index = (key_index + 1) % len(api_keys)
                     else:
                         # Direct model usage with retry
                         actual_model = get_actual_model()
-                        packages, key_index = extract_packages_gemini(
+                        packages, used_key_idx = extract_packages_gemini(
                             image_bytes=preprocessed,
                             api_keys=api_keys,
                             key_index=key_index,
@@ -966,6 +971,8 @@ if app_mode == "Dashboard Input":
                             on_status=lambda msg: status_container.warning(f"{msg}"),
                         )
                         all_packages.extend(packages)
+                        # Advance key_index to distribute load evenly
+                        key_index = (used_key_idx + 1) % len(api_keys)
                         
                 except Exception as exc:
                     err_str = str(exc)
@@ -1016,6 +1023,11 @@ if app_mode == "Dashboard Input":
             f"**{len(df_display)} paket** diekstrak  ·  "
             f"File: {', '.join(st.session_state.uploaded_file_names[:3])}"
             + ("..." if len(st.session_state.uploaded_file_names) > 3 else ""),
+        )
+        st.warning(
+            ":material/warning: **Penting**: Hasil scan lapangan mungkin tidak sempurna "
+            "karena kualitas brosur (buram, pantulan cahaya, terlipat). "
+            "Mohon manfaatkan fitur editor di bawah ini untuk memvalidasi dan memperbaiki data secara manual."
         )
         st.caption(
             "Periksa dan koreksi data di bawah ini. "
@@ -1248,6 +1260,101 @@ if app_mode == "Dashboard Input":
                 st.error(f"Gagal generate Excel riwayat: {e}")
                 
             st.dataframe(recent, use_container_width=True, hide_index=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PAGE: INSIGHT & KOMPETISI
+# ══════════════════════════════════════════════════════════════════════════════
+elif app_mode == "Insight & Kompetisi":
+    st.markdown("""
+        <div class="page-header">
+            <h1>Insight & Kompetisi Harga</h1>
+        </div>
+    """, unsafe_allow_html=True)
+    st.markdown("Menganalisis performa penawaran IOH (IM3 & 3ID) dibandingkan kompetitor berdasarkan data database.")
+    st.divider()
+    
+    # Fetch data
+    df_all = db.query("SELECT * FROM package_history")
+    
+    if df_all.empty:
+        st.warning("Belum ada data di database. Silakan ekstrak dan simpan data terlebih dahulu dari tab Dashboard Input.")
+    else:
+        # We need to find the best yields for IOH vs Competitors per category
+        st.header("Ringkasan Segmen")
+        
+        categories = df_all["category"].unique()
+        
+        # Prepare lists for highlights
+        ioh_wins = []
+        ioh_competitive = []
+        ioh_needs_improvement = []
+        
+        IOH_PROVIDERS = ["IM3", "3ID"]
+        
+        for cat in categories:
+            cat_df = df_all[df_all["category"] == cat]
+            if cat_df.empty:
+                continue
+                
+            # Get best deal per provider
+            best_yields = cat_df.groupby("provider")["yield_val"].min().reset_index()
+            
+            # Split IOH vs Others
+            ioh_data = best_yields[best_yields["provider"].isin(IOH_PROVIDERS)]
+            other_data = best_yields[~best_yields["provider"].isin(IOH_PROVIDERS)]
+            
+            if ioh_data.empty or other_data.empty:
+                continue
+                
+            best_ioh_yield = ioh_data["yield_val"].min()
+            best_ioh_prov = ioh_data.loc[ioh_data["yield_val"].idxmin(), "provider"]
+            
+            best_other_yield = other_data["yield_val"].min()
+            best_other_prov = other_data.loc[other_data["yield_val"].idxmin(), "provider"]
+            
+            diff_pct = (best_ioh_yield - best_other_yield) / best_other_yield * 100
+            
+            summary_text = f"**{cat}**: {best_ioh_prov} (Rp {best_ioh_yield:,.0f}/GB) vs {best_other_prov} (Rp {best_other_yield:,.0f}/GB)"
+            
+            if best_ioh_yield < best_other_yield:
+                ioh_wins.append(summary_text)
+            elif diff_pct <= 10:  # within 10% difference
+                ioh_competitive.append(summary_text)
+            else:
+                ioh_needs_improvement.append(summary_text)
+                
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            st.success("🏆 **IOH Menang (Termurah)**")
+            for item in ioh_wins:
+                st.write(f"- {item}")
+            if not ioh_wins:
+                st.write("- Belum ada data")
+                
+        with col2:
+            st.info("🤝 **IOH Kompetitif (Selisih < 10%)**")
+            for item in ioh_competitive:
+                st.write(f"- {item}")
+            if not ioh_competitive:
+                st.write("- Belum ada data")
+                
+        with col3:
+            st.error("🚨 **Perlu Di-improve (Kompetitor Jauh Lebih Murah)**")
+            for item in ioh_needs_improvement:
+                st.write(f"- {item}")
+            if not ioh_needs_improvement:
+                st.write("- Belum ada data")
+
+        st.divider()
+        st.header("Rata-rata Yield (Rp/GB) Berdasarkan Kategori")
+        
+        # Plot chart
+        chart_data = df_all.groupby(["category", "provider"])["yield_val"].mean().reset_index()
+        chart_pivot = chart_data.pivot(index="category", columns="provider", values="yield_val").fillna(0)
+        
+        st.bar_chart(chart_pivot, height=400)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

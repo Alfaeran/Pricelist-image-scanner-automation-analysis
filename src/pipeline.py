@@ -67,6 +67,7 @@ You are an expert OCR and data extraction assistant for Indonesian cellular oper
 Your task is to extract EVERY internet package visible in this image into a JSON format.
 
 Ignore: watermarks, shelves, bottles, reflections, human objects, posters unrelated to internet packages.
+Since these are field scans, images may be blurry or hard to read. If a package row is completely unreadable or highly ambiguous, SKIP IT. Do not guess or hallucinate data. Only extract data that you are reasonably confident about.
 
 Return ONLY a valid JSON array of objects.
 
