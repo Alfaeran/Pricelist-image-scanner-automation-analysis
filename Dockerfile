@@ -1,8 +1,6 @@
 FROM python:3.11-slim
 
 # Install system dependencies
-# libgl1 and libglib2.0-0 are sometimes required for OpenCV even with headless,
-# but headless usually bundles them. We'll add them just in case.
 RUN apt-get update && apt-get install -y \
     libgl1 \
     libglib2.0-0 \
@@ -17,8 +15,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy source code
 COPY . .
 
-# Expose Streamlit port
-EXPOSE 8501
+# Expose FastAPI port
+EXPOSE 8001
 
-# Run the app
-ENTRYPOINT ["streamlit", "run", "src/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Run from src/ so pipeline.py is importable as a sibling module
+CMD ["sh", "-c", "cd /app/src && uvicorn fastapi_app:app --host 0.0.0.0 --port 8001"]

@@ -1,14 +1,55 @@
 version: '3.8'
 
 services:
-  pricelist-scanner:
-    build: .
-    container_name: pricelist_scanner_app
-    ports:
-      - "8501:8501"
-    volumes:
-      - ./data:/app/data
-    restart: unless-stopped
+  db:
+    image: postgres:15-alpine
+    container_name: scanner_db
     environment:
-      # You can override this via .env file or host environment
-      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      POSTGRES_DB: scanner_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  laravel:
+    build: 
+      context: ./scanner-app
+    container_name: scanner_laravel
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./scanner-app:/app
+    depends_on:
+      - db
+    restart: unless-stopped
+    command: php artisan serve --host=0.0.0.0 --port=8000
+
+  queue_worker:
+    build: 
+      context: ./scanner-app
+    container_name: scanner_queue_worker
+    volumes:
+      - ./scanner-app:/app
+    depends_on:
+      - db
+      - fastapi
+    restart: unless-stopped
+    command: php artisan queue:work --tries=3 --timeout=120
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: scanner_fastapi
+    ports:
+      - "8001:8001"
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    command: bash -c "cd /app/src && uvicorn fastapi_app:app --host 0.0.0.0 --port 8001"
+
+volumes:
+  db_data:

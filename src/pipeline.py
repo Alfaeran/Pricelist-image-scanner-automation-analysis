@@ -60,47 +60,22 @@ HEADER_COLORS = {
 }
 
 # Konfigurasi Model
-MODEL_NAME = "gemini-3.5-flash"
+MODEL_NAME = "gemini-3.1-flash-lite"
 
 EXTRACTION_PROMPT = """
-You are an expert OCR and data extraction assistant for Indonesian cellular operators.
-Your task is to extract EVERY internet package visible in this image into a JSON format.
+Ekstrak semua paket data internet dari gambar ini.
 
-Ignore: watermarks, shelves, bottles, reflections, human objects, posters unrelated to internet packages.
-Since these are field scans, images may be blurry or hard to read. If a package row is completely unreadable or highly ambiguous, SKIP IT. Do not guess or hallucinate data. Only extract data that you are reasonably confident about.
+ATURAN:
+- Provider harus salah satu dari: "TSEL", "IM3", "3ID", "XL", "AXIS", "SF"
+- Konversi harga: K = ribuan (37K -> 37000). Abaikan "Rp", titik, spasi.
+- UNLIMITED + GB/hari: kalikan (contoh 3GB/hari x 28hari = 84.0 GB)
+- price: integer, gb: float, days: integer
+- Abaikan baris jika price, gb, atau days kosong
+- Abaikan watermark, botol, rak, orang, dan objek non-data
+- Ekstrak juga `image_timestamp` (waktu pengambilan foto) dan `image_location` (lokasi/geolokasi) jika ada di dalam gambar overlay. Jika tidak ada, isi null.
 
-Return ONLY a valid JSON array of objects.
-
-JSON format:
-[
-  {
-    "provider": "IM3",
-    "price": 0,
-    "gb": 0.0,
-    "days": 0
-  }
-]
-
-CRITICAL RULES:
-1. PROVIDER CODES: "TSEL", "IM3", "3ID", "XL", "AXIS", "SF".
-
-2. CURRENCY CONVERSION:
-   Convert "K" to thousands (e.g., 37K -> 37000). Ignore "Rp", ".", or spaces.
-
-3. THE "UNLIMITED" MULTIPLICATION RULE (CRITICAL FOR "GB/hari"):
-   - Scan the banner or the specific package section for the keyword "UNLIMITED".
-   - IF IT IS AN "UNLIMITED" PACKAGE AND specifies a daily quota (e.g., 1, 1.5, 2, 3 "GB/hari") with an active period (e.g., "28 Hari"), you MUST multiply them to get the total GB. (Example: "3 GB/hari" for 28 Hari = 84.0 GB).
-   - IF IT IS NOT AN "UNLIMITED" PACKAGE (regular packages), the text "GB/hari" is a TYPO from the print shop. DO NOT MULTIPLY. Just extract the exact base number written (e.g., treat "24 GB/hari" for 28 Hari as simply 24.0).
-
-4. STRICT DATA TYPES:
-   - "price" must be integer.
-   - "gb" must be float or integer.
-   - "days" must be integer.
-
-5. MISSING DATA:
-   If one row has missing Price OR GB OR Days, ignore that row. Do not guess incomplete data.
-
-6. Output raw JSON only. Do not use markdown like ```json.
+Kembalikan JSON array saja, tanpa teks tambahan:
+[{"provider":"...","price":0,"gb":0.0,"days":0,"image_timestamp":"2024-01-01 12:00","image_location":"Jakarta"}]
 """.strip()
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
@@ -198,85 +173,61 @@ def extract_from_zip(zip_bytes: bytes) -> list[tuple[str, bytes]]:
     return results
 
 
-def resolve_uploaded_files(
-    uploaded_files: list,
-) -> list[tuple[str, bytes]]:
-    """Resolve a mixed list of uploaded files into (filename, image_bytes) pairs.
-
-    Handles any combination of:
-    - Individual image files (JPG, PNG, WEBP, BMP, TIFF)
-    - ZIP archives containing images (extracted recursively)
-    - Non-image files are silently skipped
-
-    Parameters
-    ----------
-    uploaded_files : list
-        List of Streamlit UploadedFile objects.
-
-    Returns
-    -------
-    list[tuple[str, bytes]]
-        Sorted list of (filename, raw_image_bytes).
-    """
-    images: list[tuple[str, bytes]] = []
-    skipped: list[str] = []
-
-    for uf in uploaded_files:
-        name = uf.name
-        data = uf.getvalue()
-
-        if is_zip_file(name, data):
-            # Extract images from ZIP
-            extracted = extract_from_zip(data)
-            images.extend(extracted)
-        elif is_image_file(name):
-            # Direct image file
-            images.append((name, data))
-        else:
-            skipped.append(name)
-
-    # Sort by filename for consistent ordering
-    images.sort(key=lambda x: x[0])
-    return images
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 3. Gemini Extraction (from notebook cells 111-278)
-# ══════════════════════════════════════════════════════════════════════════════
-
 def _parse_gemini_response(raw_text: str) -> list[dict]:
-    """Strip markdown fences and parse JSON from Gemini response."""
+    """Parse JSON from Gemini response. Handles both structured JSON output
+    and fallback text responses with embedded JSON."""
+    import re
+    import json
     text = raw_text.strip()
-    text = text.replace("```json", "").replace("```", "").strip()
-
+    
+    # Strategy 1: Direct parse (works with response_mime_type="application/json")
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"Gagal mem-parse respons Gemini sebagai JSON.\n"
-            f"Respons mentah:\n{text}\n\nError: {exc}"
-        )
-
-    if not isinstance(data, list):
-        raise RuntimeError(f"Respons Gemini bukan JSON array.\nRespons: {text}")
-
-    return data
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+    
+    # Strategy 2: Strip markdown fences
+    cleaned = text.replace("```json", "").replace("```", "").strip()
+    try:
+        data = json.loads(cleaned)
+        if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+            return data
+    except json.JSONDecodeError:
+        pass
+    
+    # Strategy 3: Find JSON array pattern [{...}] in text
+    match = re.search(r'\[\s*\{[\s\S]*\}\s*\]', cleaned)
+    if match:
+        try:
+            data = json.loads(match.group(0))
+            if isinstance(data, list) and len(data) > 0:
+                return data
+        except json.JSONDecodeError:
+            pass
+    
+    raise RuntimeError(
+        f"Gagal mem-parse respons Gemini sebagai JSON.\n"
+        f"Respons mentah:\n{text[:500]}"
+    )
 
 
 def extract_packages_gemini(
-    image_bytes: bytes,
+    image_bytes_list: list[bytes],
     api_keys: list[str],
     key_index: int = 0,
     max_retries: int = 6,
     model: str = MODEL_NAME,
     on_status: callable | None = None,
+    custom_prompt: str | None = None,
 ) -> tuple[list[dict], int]:
-    """Extract packages from a single preprocessed image via Gemini.
+    """Extract packages from multiple preprocessed images via Gemini.
 
     Parameters
     ----------
-    image_bytes : bytes
-        Preprocessed JPEG image bytes.
+    image_bytes_list : list[bytes]
+        List of preprocessed JPEG image bytes.
     api_keys : list[str]
         List of Gemini API keys for rotation.
     key_index : int
@@ -287,6 +238,8 @@ def extract_packages_gemini(
         Gemini model name.
     on_status : callable | None
         Optional callback ``on_status(message: str)`` for status updates.
+    custom_prompt : str | None
+        Optional user prompt to append to the system prompt.
 
     Returns
     -------
@@ -302,14 +255,27 @@ def extract_packages_gemini(
         try:
             client = genai.Client(api_key=api_keys[current_key_idx])
 
-            # Build image part from bytes
-            image_part = types.Part.from_bytes(
-                data=image_bytes, mime_type="image/jpeg"
+            # Build final prompt
+            final_prompt = EXTRACTION_PROMPT
+            if custom_prompt and custom_prompt.strip() and custom_prompt.strip() != "Tolong scan gambar ini.":
+                final_prompt = f"{final_prompt}\n\nINSTRUKSI TAMBAHAN DARI USER:\n{custom_prompt.strip()}"
+
+            # Build image parts from all bytes
+            parts = [final_prompt]
+            for img_bytes in image_bytes_list:
+                parts.append(types.Part.from_bytes(
+                    data=img_bytes, mime_type="image/jpeg"
+                ))
+
+            # Use structured JSON output for speed (no persona logs)
+            config = types.GenerateContentConfig(
+                response_mime_type="application/json",
             )
 
             response = client.models.generate_content(
                 model=model,
-                contents=[EXTRACTION_PROMPT, image_part],
+                contents=parts,
+                config=config,
             )
 
             data = _parse_gemini_response(response.text)

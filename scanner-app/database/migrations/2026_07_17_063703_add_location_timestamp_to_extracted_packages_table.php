@@ -1,0 +1,29 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up(): void
+    {
+        Schema::table('extracted_packages', function (Blueprint $table) {
+            $table->string('image_timestamp')->nullable()->after('category');
+            $table->string('image_location')->nullable()->after('image_timestamp');
+        });
+    }
+
+    /**
+     * Reverse the migrations.
+     */
+    public function down(): void
+    {
+        Schema::table('extracted_packages', function (Blueprint $table) {
+            $table->dropColumn(['image_timestamp', 'image_location']);
+        });
+    }
+};
