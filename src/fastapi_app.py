@@ -6,7 +6,7 @@ import json
 import logging
 
 # Import existing pipeline functions
-from pipeline import preprocess_image, extract_packages_gemini, generate_excel, generate_summary_insights
+from pipeline import preprocess_image, extract_packages_gemini, generate_excel, generate_summary_insights, is_zip_file, extract_from_zip
 import pandas as pd
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, Response
@@ -17,9 +17,10 @@ logging.basicConfig(level=logging.INFO)
 @app.post("/api/extract")
 async def extract_data(
     files: List[UploadFile] = File(...),
-    api_key: str = Form(...),
+    api_keys: str = Form(...),
     model: str = Form("gemini-2.0-flash"),
-    prompt: str = Form(None)
+    prompt: str = Form(None),
+    pricelist_id: int = Form(None)
 ):
     """
     Endpoint for Laravel to send images and API key to.
@@ -28,16 +29,48 @@ async def extract_data(
     try:
         processed_images = []
         for file in files:
-            image_bytes = await file.read()
-            processed_bytes = preprocess_image(image_bytes)
-            processed_images.append(processed_bytes)
+            file_bytes = await file.read()
             
+            if is_zip_file(file.filename, file_bytes):
+                # Ekstrak gambar dari ZIP
+                extracted = extract_from_zip(file_bytes)
+                for name, img_bytes in extracted:
+                    processed_bytes = preprocess_image(img_bytes)
+                    processed_images.append(processed_bytes)
+            else:
+                processed_bytes = preprocess_image(file_bytes)
+                processed_images.append(processed_bytes)
+                
+        if not processed_images:
+            raise ValueError("Tidak ada gambar valid yang ditemukan di dalam file upload.")
+            
+        keys_list = [k.strip() for k in api_keys.split(",") if k.strip()]
+        if not keys_list:
+            raise ValueError("Tidak ada API key yang valid.")
+            
+        models_list = [m.strip() for m in model.split(",") if m.strip()]
+        if not models_list:
+            models_list = ["gemini-2.0-flash"]
+
+        import requests
+        def status_callback(msg: str):
+            if pricelist_id is not None:
+                try:
+                    requests.post(
+                        f"http://127.0.0.1:8002/api/scanner/{pricelist_id}/status",
+                        json={"status": msg},
+                        timeout=3
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to push status to webhook: {e}")
+
         # Call Gemini via our pipeline
         data, _ = extract_packages_gemini(
             image_bytes_list=processed_images,
-            api_keys=[api_key],
-            model=model,
-            custom_prompt=prompt
+            api_keys=keys_list,
+            models=models_list,
+            custom_prompt=prompt,
+            on_status=status_callback
         )
         
         return JSONResponse(content={"status": "success", "data": data})
@@ -65,6 +98,10 @@ async def export_excel(req: ExportRequest):
         # Convert to DataFrame
         df = pd.DataFrame([p.dict() for p in req.packages])
         
+        # Apply pipeline's clean_dataframe to recalculate yield and re-categorize into SACHET / MONTHLY categories
+        from pipeline import clean_dataframe
+        df = clean_dataframe(df)
+        
         # Generate Excel bytes
         excel_bytes = generate_excel(df)
         
@@ -90,15 +127,54 @@ async def fetch_insights(req: ExportRequest):
 class ChatRequest(BaseModel):
     message: str
     packages: List[PackageItem]
+    api_keys: str
+    model: str = "gemini-2.0-flash"
+
+class CheckRequest(BaseModel):
     api_key: str
+
+@app.post("/api/keys/check")
+async def check_api_key(req: CheckRequest):
+    """
+    Validates the API key and returns a list of supported models.
+    """
+    try:
+        client = genai.Client(api_key=req.api_key)
+        # We want to list models and check if they are suitable for generateContent
+        supported_models = []
+        for m in client.models.list_models():
+            # Filter models containing gemini in their name and supporting text/image generation
+            name = m.name.replace("models/", "")
+            if "gemini" in name:
+                supported_models.append(name)
+        
+        # Deduplicate and sort
+        supported_models = list(set(supported_models))
+        
+        return JSONResponse(content={
+            "status": "success", 
+            "supported_models": supported_models
+        })
+    except Exception as e:
+        return JSONResponse(status_code=400, content={
+            "status": "error",
+            "message": str(e)
+        })
 
 @app.post("/api/chat")
 async def chat_with_data(req: ChatRequest):
     try:
         from google import genai
         from google.genai import types
+        import time
 
-        client = genai.Client(api_key=req.api_key)
+        keys_list = [k.strip() for k in req.api_keys.split(",") if k.strip()]
+        if not keys_list:
+            raise ValueError("Tidak ada API key yang valid.")
+            
+        models_list = [m.strip() for m in req.model.split(",") if m.strip()]
+        if not models_list:
+            models_list = ["gemini-2.0-flash"]
         
         # Format context data
         df = pd.DataFrame([p.dict() for p in req.packages])
@@ -125,17 +201,44 @@ Contoh JSON Chart.js:
 
 Jawaban Anda:
 """
-        response = client.models.generate_content(
-            model="gemini-3.5-flash",
-            contents=prompt,
-        )
+        config = types.GenerateContentConfig(temperature=0.0)
+        
+        response = None
+        current_idx = 0
+        max_attempts = len(keys_list) * len(models_list)
+        
+        for attempt in range(max_attempts):
+            model_idx = attempt // len(keys_list)
+            current_model = models_list[model_idx]
+            
+            try:
+                client = genai.Client(api_key=keys_list[current_idx])
+                response = client.models.generate_content(
+                    model=current_model,
+                    contents=prompt,
+                    config=config,
+                )
+                break
+            except Exception as e:
+                error_msg = str(e)
+                if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    current_idx = (current_idx + 1) % len(keys_list)
+                    time.sleep(1)
+                elif "404" in error_msg or "NOT_FOUND" in error_msg or "403" in error_msg or "PERMISSION_DENIED" in error_msg:
+                    current_idx = (current_idx + 1) % len(keys_list)
+                else:
+                    logging.error(f"Chat error: {error_msg}")
+                    current_idx = (current_idx + 1) % len(keys_list)
+                    
+        if not response:
+            raise RuntimeError("Gagal mendapatkan respons dari Gemini setelah merotasi seluruh API key.")
         
         text = response.text
         chart_config = None
         
-        # Extract JSON if exists
+        # Extract JSON if exists (more robust regex)
         import re
-        match = re.search(r'```json\n([\s\S]*?)\n```', text)
+        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text, re.IGNORECASE)
         if match:
             try:
                 chart_config = json.loads(match.group(1))
@@ -155,4 +258,4 @@ Jawaban Anda:
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8001)
+    uvicorn.run(app, host="0.0.0.0", port=8081)

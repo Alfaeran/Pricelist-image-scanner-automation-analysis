@@ -14,10 +14,12 @@ class ApiKey extends Model
         'is_active',
         'cooldown_until',
         'usage_count',
+        'supported_models',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'cooldown_until' => 'datetime',
+        'supported_models' => 'array',
     ];
 }

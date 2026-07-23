@@ -65,7 +65,8 @@ class ScannerController extends Controller
 
         // 3. Dispatch Background Job if there are images
         if (count($paths) > 0) {
-            ProcessPricelistJob::dispatch($pricelist, $paths);
+            $isAppend = $request->boolean('is_append', false);
+            ProcessPricelistJob::dispatch($pricelist, $paths, $isAppend);
         } else {
             // If just text, we redirect back. The frontend will hit ChatController separately or we can just let it be.
             // Actually, if it's just text, the frontend should just use ChatController directly to get the AI response synchronously.
@@ -243,5 +244,53 @@ class ScannerController extends Controller
         }
 
         return back()->withErrors(['error' => 'Sesi ini sudah tidak dapat dibatalkan.']);
+    }
+
+    public function updateStatus(Request $request, Pricelist $pricelist)
+    {
+        $request->validate(['status' => 'required|string']);
+        $pricelist->update(['status' => $request->status]);
+        return response()->json(['success' => true]);
+    }
+
+    public function updatePackages(Request $request, Pricelist $pricelist)
+    {
+        $request->validate([
+            'packages' => 'required|array',
+            'packages.*.provider' => 'required|string',
+            'packages.*.price' => 'required|numeric',
+            'packages.*.gb' => 'required|numeric',
+            'packages.*.days' => 'required|integer',
+        ]);
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($pricelist, $request) {
+            $pricelist->packages()->delete();
+            foreach ($request->packages as $pkg) {
+                $price = (int) $pkg['price'];
+                $gb = (float) $pkg['gb'];
+                $days = (int) $pkg['days'];
+                
+                $yield = $gb > 0 ? ceil($price / $gb) : 0;
+                
+                $category = 'Bulanan (Standar)';
+                if ($days <= 7) $category = 'Harian (Sachet)';
+                elseif ($days <= 15) $category = 'Mingguan';
+                elseif ($price > 100000) $category = 'Bulanan (Premium/Jumbo)';
+
+                \App\Models\ExtractedPackage::create([
+                    'pricelist_id' => $pricelist->id,
+                    'provider' => $pkg['provider'],
+                    'price' => $price,
+                    'gb' => $gb,
+                    'days' => $days,
+                    'yield_val' => $yield,
+                    'category' => $category,
+                    'image_timestamp' => $pkg['image_timestamp'] ?? null,
+                    'image_location' => $pkg['image_location'] ?? null,
+                ]);
+            }
+        });
+
+        return back()->with('success', 'Data berhasil diperbarui berdasarkan validasi manual.');
     }
 }

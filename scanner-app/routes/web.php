@@ -43,6 +43,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/scanner/{pricelist}/cancel', [ScannerController::class, 'cancel'])->name('scanner.cancel');
     Route::put('/scanner/{pricelist}/rename', [ScannerController::class, 'rename'])->name('scanner.rename');
     Route::put('/scanner/{pricelist}/message/{chatMessage}', [ScannerController::class, 'updateMessage'])->name('scanner.message.update');
+    Route::put('/scanner/{pricelist}/packages', [ScannerController::class, 'updatePackages'])->name('scanner.packages.update');
+
+    Route::post('/api/scanner/{pricelist}/status', [ScannerController::class, 'updateStatus'])->name('scanner.status.update')->withoutMiddleware(['auth', 'verified']);
 
     // API Key management
     Route::get('/api/keys', [ApiKeyController::class, 'index'])->name('apikeys.index');

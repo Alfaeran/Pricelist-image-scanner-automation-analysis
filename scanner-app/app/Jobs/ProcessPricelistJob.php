@@ -16,13 +16,14 @@ class ProcessPricelistJob implements ShouldQueue
 {
     use Queueable;
 
-    public $timeout = 120;
+    public $timeout = 600;
     public $tries = 3; 
     public $backoff = [10, 30, 60]; 
 
     public function __construct(
         public Pricelist $pricelist,
-        public array $filePaths
+        public array $filePaths,
+        public bool $isAppend = false
     ) {}
 
     public function handle(): void
@@ -36,26 +37,56 @@ class ProcessPricelistJob implements ShouldQueue
             
             $this->pricelist->update(['status' => 'Mengekstrak data dari gambar...']);
 
-            // 1. Get Healthy API Key
-            $apiKeyModel = $this->getHealthyApiKey();
+            // 1. Get Healthy API Keys
+            $activeKeysData = ApiKey::where('is_active', true)->get();
+            if ($activeKeysData->isEmpty()) {
+                $this->failPermanently("Tidak ada API Key yang aktif. Silakan tambahkan API Key di sidebar.");
+                return;
+            }
+            $apiKeysString = implode(',', $activeKeysData->pluck('key')->toArray());
 
-            if (!$apiKeyModel) {
-                $totalKeys = ApiKey::where('is_active', true)->count();
-                if ($totalKeys > 0) {
-                    throw new \Exception("Semua {$totalKeys} API Key sedang dalam masa cooldown. Job akan dicoba ulang secara otomatis setelah cooldown selesai.");
-                } else {
-                    $this->failPermanently("Tidak ada API Key yang dikonfigurasi. Silakan tambahkan API Key di sidebar.");
-                    return;
+            // Collect all supported models from active keys
+            $supportedModelsPool = [];
+            foreach ($activeKeysData as $keyModel) {
+                if (is_array($keyModel->supported_models)) {
+                    $supportedModelsPool = array_merge($supportedModelsPool, $keyModel->supported_models);
                 }
             }
+            $supportedModelsPool = array_unique($supportedModelsPool);
 
-            $apiKeyModel->increment('usage_count');
+            // Our preferred fallback priority
+            $priority = [
+                'gemini-3.1-flash-lite',
+                'gemini-3.5-flash',
+                'gemini-2.0-flash',
+                'gemini-1.5-flash',
+                'gemini-1.5-flash-8b',
+                'gemini-1.5-pro'
+            ];
+            
+            // Filter and sort the models based on our priority
+            $finalModels = [];
+            foreach ($priority as $m) {
+                if (in_array($m, $supportedModelsPool)) {
+                    $finalModels[] = $m;
+                }
+            }
+            
+            // Fallback if somehow no standard models are supported
+            if (empty($finalModels)) {
+                $finalModels = !empty($supportedModelsPool) ? $supportedModelsPool : $priority;
+            }
+            $modelsString = implode(',', $finalModels);
+
+            // Increment usage count for the first key for telemetry purposes
+            $firstKeyModel = ApiKey::where('key', $activeKeysData->first()->key)->first();
+            if ($firstKeyModel) $firstKeyModel->increment('usage_count');
 
             // 2. Read Image Files and Call FastAPI
             $extractStart = microtime(true);
             
             try {
-                $request = Http::timeout(90);
+                $request = Http::timeout(300);
                 $hasValidFile = false;
                 
                 foreach ($this->filePaths as $path) {
@@ -78,9 +109,10 @@ class ProcessPricelistJob implements ShouldQueue
                 $prompt = $latestMsg ? $latestMsg->content : null;
 
                 $response = $request->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/extract', [
-                    'api_key' => $apiKeyModel->key,
-                    'model' => 'gemini-3.1-flash-lite',
+                    'api_keys' => $apiKeysString,
+                    'model' => $modelsString,
                     'prompt' => $prompt,
+                    'pricelist_id' => $this->pricelist->id
                 ]);
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
                 throw new \Exception("Tidak bisa terhubung ke FastAPI microservice. Pastikan container berjalan. Error: " . $e->getMessage());
@@ -98,7 +130,9 @@ class ProcessPricelistJob implements ShouldQueue
                     if ($this->pricelist->fresh()->status === 'cancelled') return;
 
                     DB::transaction(function () use ($data) {
-                        $this->pricelist->packages()->delete(); 
+                        if (!$this->isAppend) {
+                            $this->pricelist->packages()->delete(); 
+                        }
                         foreach ($data as $pkg) {
                             if (!isset($pkg['price'], $pkg['gb'], $pkg['days'])) continue;
 
@@ -110,6 +144,7 @@ class ProcessPricelistJob implements ShouldQueue
                                 'days' => (int) $pkg['days'],
                                 'yield_val' => $pkg['gb'] > 0 ? ceil($pkg['price'] / $pkg['gb']) : 0,
                                 'category' => $this->categorize((int) $pkg['days'], (int) $pkg['price']),
+                                'product_type' => $pkg['product_type'] ?? null,
                                 'image_timestamp' => $pkg['image_timestamp'] ?? null,
                                 'image_location' => $pkg['image_location'] ?? null,
                             ]);
@@ -139,7 +174,8 @@ class ProcessPricelistJob implements ShouldQueue
                         $insightResponse = Http::timeout(60)->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/chat', [
                             'message' => 'Buatkan benchmarking antar brand dan insight summaries dari data hasil scan ini.',
                             'packages' => $payload,
-                            'api_key' => $apiKeyModel->key
+                            'api_keys' => $apiKeysString,
+                            'model' => $modelsString
                         ]);
                         $chatEnd = microtime(true);
                         $metrics['chat_time'] = round($chatEnd - $chatStart, 2);
@@ -169,6 +205,7 @@ class ProcessPricelistJob implements ShouldQueue
                     return;
                 }
 
+                $this->pricelist->update(['status' => 'error']);
                 $this->failPermanently("Gemini tidak bisa mengekstrak data dari gambar ini (respons kosong). Pastikan gambar berisi tabel harga.");
                 return;
             }
@@ -176,18 +213,32 @@ class ProcessPricelistJob implements ShouldQueue
             // 5. Handle Errors
             $errorMsg = $response->body();
             $statusCode = $response->status();
-
-            if ($statusCode === 429 || $statusCode === 503 || str_contains($errorMsg, '429') || str_contains($errorMsg, 'RESOURCE_EXHAUSTED')) {
-                $apiKeyModel->update(['cooldown_until' => now()->addMinutes(1)]);
-                throw new \Exception("Rate limit tercapai. Key #{$apiKeyModel->id} masuk cooldown 1 menit.");
+            
+            $this->pricelist->update(['status' => 'error']);
+            
+            $parsedError = json_decode($errorMsg, true);
+            $detail = $parsedError['detail'] ?? $parsedError['message'] ?? $errorMsg;
+            if (is_array($detail)) {
+                $detail = json_encode($detail);
+            }
+            
+            $userFriendlyMessage = "Gagal memproses gambar. ";
+            if ($statusCode === 422) {
+                $userFriendlyMessage .= "Konfigurasi API tidak valid atau ada parameter yang kurang.";
+            } elseif ($statusCode === 500 || $statusCode === 503) {
+                if (str_contains(strtolower($detail), 'habis')) {
+                    $userFriendlyMessage = "Seluruh kuota harian dari API Key Anda telah habis. Silakan tunggu beberapa saat atau tambahkan API Key baru di pengaturan.";
+                } elseif (str_contains(strtolower($detail), 'format tidak didukung')) {
+                    $userFriendlyMessage = "Format gambar tidak didukung atau rusak.";
+                } else {
+                    $userFriendlyMessage .= "Server AI sedang sibuk atau mengalami kendala internal.";
+                }
+            } else {
+                $userFriendlyMessage .= "Kode HTTP {$statusCode}.";
             }
 
-            if ($statusCode === 400 || $statusCode === 401 || $statusCode === 403 || str_contains($errorMsg, 'API_KEY_INVALID')) {
-                $apiKeyModel->update(['is_active' => false]);
-                throw new \Exception("API Key tidak valid dan telah dinonaktifkan. Mencoba key lain...");
-            }
-
-            $this->failPermanently("Gagal dari server Python (HTTP {$statusCode}): " . substr($errorMsg, 0, 300));
+            Log::error("FastAPI Error ($statusCode): $errorMsg");
+            $this->failPermanently($userFriendlyMessage);
 
         } catch (\Exception $e) {
             Log::error("Scanner Job Error: " . $e->getMessage());
@@ -229,5 +280,14 @@ class ProcessPricelistJob implements ShouldQueue
         if ($days <= 15) return 'Mingguan';
         if ($price > 100000) return 'Bulanan (Premium/Jumbo)';
         return 'Bulanan (Standar)';
+    }
+
+    public function failed(\Throwable $exception): void
+    {
+        Log::error("Job gagal permanen: " . $exception->getMessage());
+        $this->pricelist->update([
+            'status' => 'failed',
+            'error_message' => 'Proses gagal (kemungkinan karena melampaui batas waktu/timeout). Silakan ulangi.'
+        ]);
     }
 }

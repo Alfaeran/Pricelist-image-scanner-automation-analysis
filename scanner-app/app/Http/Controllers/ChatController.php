@@ -18,7 +18,22 @@ class ChatController extends Controller
         ]);
 
         if ($pricelist->status !== 'processed') {
-            return response()->json(['error' => 'Data belum diproses.'], 400);
+            // Simpan pesan user ke database
+            $userMsg = ChatMessage::create([
+                'pricelist_id' => $pricelist->id,
+                'role' => 'user',
+                'content' => $request->message
+            ]);
+
+            // Kembalikan respon bahwa pesan masuk antrean
+            return response()->json([
+                'user_message' => $userMsg,
+                'assistant_message' => [
+                    'id' => time(),
+                    'role' => 'assistant',
+                    'content' => '⏳ *Permintaan masuk ke antrean. Saya akan membalas pesan ini setelah proses ekstraksi gambar selesai.*'
+                ]
+            ]);
         }
 
         // Save User Message
@@ -41,22 +56,67 @@ class ChatController extends Controller
             ];
         })->toArray();
 
-        // Get an active API key
-        $apiKey = ApiKey::where('is_active', true)
-            ->where(function ($q) {
-                $q->whereNull('cooldown_until')->orWhere('cooldown_until', '<=', now());
-            })->first();
-
-        if (!$apiKey) {
-            return response()->json(['error' => 'Tidak ada API Key yang aktif. Tambahkan di sidebar.'], 503);
+        // Get all active API keys
+        $activeKeysData = ApiKey::where('is_active', true)->get();
+        if ($activeKeysData->isEmpty()) {
+            return response()->json(['message' => 'Tidak ada API Key yang aktif. Silakan tambahkan di menu samping.'], 500);
         }
+        $apiKeysString = implode(',', $activeKeysData->pluck('key')->toArray());
+
+        // Increment usage count on the first key for telemetry
+        $firstKey = $activeKeysData->first();
+        if ($firstKey) $firstKey->increment('usage_count');
+
+        // Dynamic model selection based on supported_models
+        $supportedModelsPool = [];
+        foreach ($activeKeysData as $keyModel) {
+            if (is_array($keyModel->supported_models)) {
+                $supportedModelsPool = array_merge($supportedModelsPool, $keyModel->supported_models);
+            }
+        }
+        $supportedModelsPool = array_unique($supportedModelsPool);
+
+        $priority = [
+            'gemini-3.1-flash-lite',
+            'gemini-3.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-8b',
+            'gemini-1.5-pro'
+        ];
+        
+        $finalModels = [];
+        foreach ($priority as $m) {
+            if (in_array($m, $supportedModelsPool)) {
+                $finalModels[] = $m;
+            }
+        }
+        
+        if (empty($finalModels)) {
+            $finalModels = !empty($supportedModelsPool) ? $supportedModelsPool : $priority;
+        }
+        $modelsString = implode(',', $finalModels);
+
+        // Prepare context data
+        $payload = array_map(function($p) {
+            return [
+                'provider' => $p['provider'],
+                'category' => $p['category'],
+                'type' => $p['type'],
+                'gb' => $p['gb'],
+                'days' => $p['days'],
+                'price' => $p['price'],
+                'yield' => $p['yield'],
+            ];
+        }, $packages->toArray());
 
         // Forward to FastAPI
         try {
             $response = Http::timeout(60)->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/chat', [
                 'message' => $request->message,
                 'packages' => $payload,
-                'api_key' => $apiKey->key
+                'api_keys' => $apiKeysString,
+                'model' => $modelsString
             ]);
 
             if ($response->successful()) {

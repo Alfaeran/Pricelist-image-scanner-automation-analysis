@@ -77,11 +77,13 @@ const submit = () => {
 
     form.transform((data) => ({
         ...data,
-        pricelist_id: activeSessionId.value
+        pricelist_id: activeSessionId.value,
+        is_append: !!activeSessionId.value
     })).post(route("scanner.store"), {
         preserveScroll: true,
         onSuccess: (page) => {
             form.reset();
+            form.images = [];
             if (fileInput.value) fileInput.value.value = "";
             if (!activeSessionId.value && page.props.pricelists.length > 0) {
                 const newest = [...page.props.pricelists].sort((a,b) => new Date(b.created_at) - new Date(a.created_at))[0];
@@ -153,8 +155,7 @@ const bestOffersMonthly = (packages) => {
 };
 
 const downloadExcel = (session) => {
-    alert("Fitur Download Excel akan mengunduh format Pivot Table. Jika endpoint backend siap, hilangkan komentar window.open di Index.vue.");
-    // window.open(route('scanner.export', session.id), '_blank');
+    window.open(route('scanner.export', session.id), '_blank');
 };
 
 const toggleTable = (id) => {
@@ -222,6 +223,19 @@ const deleteSession = (id) => {
 
 const editingPrompt = ref({});
 const retryLoading = ref({});
+const cancelLoading = ref({});
+
+const cancelScan = async (id) => {
+    if (!confirm("Batalkan proses scan ini?")) return;
+    cancelLoading.value[id] = true;
+    try {
+        await axios.post(route("scanner.cancel", id));
+        router.reload({ only: ["pricelists"], preserveScroll: true });
+    } catch (e) {
+        alert(e.response?.data?.error || "Gagal membatalkan scan.");
+    }
+    cancelLoading.value[id] = false;
+};
 
 const retryScan = async (id) => {
     if (!confirm("Ulangi proses scan untuk sesi ini?")) return;
@@ -233,6 +247,51 @@ const retryScan = async (id) => {
         alert(e.response?.data?.error || "Gagal mengulangi scan.");
     }
     retryLoading.value[id] = false;
+};
+
+// Editable Table States
+const editablePackages = ref({});
+const isEditingTable = ref({});
+const savingTable = ref({});
+
+const toggleEditTable = (listId, packages) => {
+    if (isEditingTable.value[listId]) {
+        isEditingTable.value[listId] = false;
+    } else {
+        editablePackages.value[listId] = JSON.parse(JSON.stringify(packages));
+        isEditingTable.value[listId] = true;
+        activeTables.value[listId] = true;
+    }
+};
+
+const addEmptyRow = (listId) => {
+    editablePackages.value[listId].push({
+        provider: 'TSEL',
+        category: 'Harian (Sachet)',
+        product_type: 'Isi Ulang',
+        gb: 0,
+        days: 1,
+        price: 0,
+        yield_val: 0
+    });
+};
+
+const deleteRow = (listId, index) => {
+    editablePackages.value[listId].splice(index, 1);
+};
+
+const savePackages = async (listId) => {
+    savingTable.value[listId] = true;
+    try {
+        await axios.put(route('scanner.packages.update', listId), {
+            packages: editablePackages.value[listId]
+        });
+        isEditingTable.value[listId] = false;
+        router.reload({ only: ["pricelists"], preserveScroll: true });
+    } catch (e) {
+        alert("Gagal menyimpan data: " + (e.response?.data?.message || e.message));
+    }
+    savingTable.value[listId] = false;
 };
 
 const openEditPrompt = (list) => {
@@ -551,9 +610,16 @@ onUnmounted(() => {
                         </div>
 
                         <!-- Processing Status Indicator -->
-                        <div v-if="activeSession.status !== 'processed' && activeSession.status !== 'failed'" class="bg-[#1e1e20] p-5 rounded-2xl border border-blue-500/30 flex items-center gap-4 animate-pulse shadow-lg mb-6">
-                            <div class="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
-                            <span class="text-base font-medium text-blue-300">Memproses: {{ activeSession.status === 'pending' ? 'Menunggu antrean...' : activeSession.status }}</span>
+                        <div v-if="['pending', 'processing', 'Mengekstrak data dari gambar...', 'Menyusun insight & benchmarking...'].includes(activeSession.status)" class="bg-[#1e1e20] p-5 rounded-2xl border border-blue-500/30 flex items-center justify-between shadow-lg mb-6">
+                            <div class="flex items-center gap-4">
+                                <div class="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></div>
+                                <span class="text-base font-medium text-blue-300 animate-pulse">Memproses: {{ activeSession.status === 'pending' ? 'Menunggu antrean...' : activeSession.status }}</span>
+                            </div>
+                            <button @click="cancelScan(activeSession.id)" class="px-3 py-1.5 bg-red-600/20 text-red-400 hover:bg-red-600/40 border border-red-800 rounded-lg transition text-sm font-medium flex items-center gap-1.5" :disabled="cancelLoading[activeSession.id]">
+                                <svg v-if="cancelLoading[activeSession.id]" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                Batalkan
+                            </button>
                         </div>
 
                         <!-- Error State Processing -->
@@ -622,42 +688,115 @@ onUnmounted(() => {
                                     <div class="w-2 h-2 rounded-full bg-green-500"></div>
                                     Data Berhasil Diekstrak ({{ activeSession.packages.length }} paket)
                                 </h3>
-                                <button @click="toggleTable(activeSession.id)" class="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-md text-gray-300 transition border border-gray-700">
-                                    {{ activeTables[activeSession.id] ? 'Sembunyikan Tabel' : 'Lihat Tabel' }}
-                                </button>
+                                <div class="flex items-center gap-3">
+                                    <div v-if="activeSession.performance_metrics" class="hidden md:flex gap-2 text-[10px] bg-black/30 rounded-lg px-2 py-1 border border-gray-700">
+                                        <span class="text-gray-400" title="Waktu Ekstraksi Vision AI">⏱️ Ekstraksi: <span class="text-indigo-300">{{ activeSession.performance_metrics.extract_time }}s</span></span>
+                                        <span class="text-gray-600">|</span>
+                                        <span class="text-gray-400" title="Waktu Pembuatan Benchmarking">Analisis: <span class="text-indigo-300">{{ activeSession.performance_metrics.chat_time }}s</span></span>
+                                        <span class="text-gray-600">|</span>
+                                        <span class="text-gray-400" title="Total Waktu">Total: <span class="text-blue-400 font-bold">{{ activeSession.performance_metrics.total_time }}s</span></span>
+                                    </div>
+                                    <a :href="route('scanner.export', activeSession.id)" class="text-xs px-3 py-1.5 bg-green-700 hover:bg-green-600 rounded-md text-white transition border border-green-600 flex items-center gap-1 font-medium">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                                        Download Excel
+                                    </a>
+                                    <button @click="toggleEditTable(activeSession.id, activeSession.packages)" class="text-xs px-3 py-1.5 bg-blue-700 hover:bg-blue-600 rounded-md text-white transition border border-blue-600 flex items-center gap-1 font-medium">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                                        {{ isEditingTable[activeSession.id] ? 'Batal Edit' : 'Edit Data' }}
+                                    </button>
+                                    <button @click="toggleTable(activeSession.id)" class="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-md text-gray-300 transition border border-gray-700">
+                                        {{ activeTables[activeSession.id] ? 'Sembunyikan Tabel' : 'Lihat Tabel' }}
+                                    </button>
+                                </div>
                             </div>
                             
-                            <div v-show="activeTables[activeSession.id]" class="overflow-x-auto">
-                                <table class="w-full text-sm text-left text-gray-300">
-                                    <thead class="text-xs text-gray-400 uppercase bg-[#1a1a1c] border-b border-gray-800">
-                                        <tr>
-                                            <th class="px-6 py-4">Provider</th>
-                                            <th class="px-6 py-4">Kategori</th>
-                                            <th class="px-6 py-4 text-right">Kuota (GB)</th>
-                                            <th class="px-6 py-4 text-right">Masa Aktif</th>
-                                            <th class="px-6 py-4 text-right">Harga</th>
-                                            <th class="px-6 py-4 text-right">Yield (Rp/GB)</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        <tr v-for="pkg in activeSession.packages" :key="pkg.id" class="border-b border-gray-800 hover:bg-[#252528] transition-colors">
-                                            <td class="px-6 py-4 font-medium text-gray-200">{{ pkg.provider }}</td>
-                                            <td class="px-6 py-4 text-gray-400">
-                                                <span class="px-2.5 py-1 bg-gray-800 rounded-full text-xs border border-gray-700">{{ pkg.category }}</span>
-                                            </td>
-                                            <td class="px-6 py-4 text-right font-medium text-blue-400">{{ pkg.gb }} GB</td>
-                                            <td class="px-6 py-4 text-right text-gray-400">{{ pkg.days }} Hari</td>
-                                            <td class="px-6 py-4 text-right text-gray-300">Rp {{ Number(pkg.price).toLocaleString("id-ID") }}</td>
-                                            <td class="px-6 py-4 text-right font-bold"
-                                                :class="{
-                                                    'text-green-400': pkg.yield_val < 3000,
-                                                    'text-yellow-400': pkg.yield_val >= 3000 && pkg.yield_val <= 5000,
-                                                    'text-red-400': pkg.yield_val > 5000,
-                                                }"
-                                            >Rp {{ Number(pkg.yield_val).toLocaleString("id-ID") }}</td>
-                                        </tr>
-                                    </tbody>
-                                </table>
+                            <div v-show="activeTables[activeSession.id]" class="flex flex-col xl:flex-row border-t border-gray-800">
+                                <!-- LEFT: Source Images (Only show when editing for easier crosscheck) -->
+                                <div v-if="isEditingTable[activeSession.id]" class="w-full xl:w-1/3 p-4 bg-[#161618] border-b xl:border-b-0 xl:border-r border-gray-800 max-h-[600px] overflow-y-auto custom-scrollbar">
+                                    <h4 class="text-xs text-gray-400 font-semibold mb-4 uppercase tracking-wider sticky top-0 bg-[#161618] py-2">Gambar Sumber Asli</h4>
+                                    <div v-if="activeSession.chat_messages" class="flex flex-col gap-4">
+                                        <template v-for="msg in activeSession.chat_messages">
+                                            <div v-if="msg.attachments && msg.attachments.length > 0" class="flex flex-col gap-4">
+                                                <img v-for="att in msg.attachments" :src="'/storage/' + att" class="rounded-lg border border-gray-700 hover:border-blue-500 transition cursor-zoom-in w-full object-contain bg-black shadow-lg" @click="window.open('/storage/' + att, '_blank')" title="Klik untuk memperbesar" />
+                                            </div>
+                                        </template>
+                                    </div>
+                                </div>
+                                
+                                <!-- RIGHT: Table -->
+                                <div class="w-full overflow-x-auto" :class="isEditingTable[activeSession.id] ? 'xl:w-2/3' : ''">
+                                    <table class="w-full text-sm text-left text-gray-300">
+                                        <thead class="text-xs text-gray-400 uppercase bg-[#1a1a1c] border-b border-gray-800">
+                                            <tr>
+                                                <th class="px-4 py-3">Provider</th>
+                                                <th class="px-4 py-3 text-right">Kuota (GB)</th>
+                                                <th class="px-4 py-3 text-right">Masa Aktif</th>
+                                                <th class="px-4 py-3 text-right">Harga</th>
+                                                <th v-if="!isEditingTable[activeSession.id]" class="px-4 py-3">Kategori</th>
+                                                <th v-if="!isEditingTable[activeSession.id]" class="px-4 py-3 text-right">Yield (Rp/GB)</th>
+                                                <th v-if="isEditingTable[activeSession.id]" class="px-4 py-3 text-center">Aksi</th>
+                                            </tr>
+                                        </thead>
+                                        
+                                        <!-- View Mode -->
+                                        <tbody v-if="!isEditingTable[activeSession.id]">
+                                            <tr v-for="pkg in activeSession.packages" :key="pkg.id" class="border-b border-gray-800 hover:bg-[#252528] transition-colors">
+                                                <td class="px-4 py-3 font-medium text-gray-200">{{ pkg.provider }}</td>
+                                                <td class="px-4 py-3 text-right font-medium text-blue-400">{{ pkg.gb }} GB</td>
+                                                <td class="px-4 py-3 text-right text-gray-400">{{ pkg.days }} Hari</td>
+                                                <td class="px-4 py-3 text-right text-gray-300">Rp {{ Number(pkg.price).toLocaleString("id-ID") }}</td>
+                                                <td class="px-4 py-3 text-gray-400">
+                                                    <span class="px-2.5 py-1 bg-gray-800 rounded-full text-[10px] border border-gray-700">{{ pkg.category }}</span>
+                                                </td>
+                                                <td class="px-4 py-3 text-right font-bold text-xs"
+                                                    :class="{
+                                                        'text-green-400': pkg.yield_val < 3000,
+                                                        'text-yellow-400': pkg.yield_val >= 3000 && pkg.yield_val <= 5000,
+                                                        'text-red-400': pkg.yield_val > 5000,
+                                                    }"
+                                                >Rp {{ Number(pkg.yield_val).toLocaleString("id-ID") }}</td>
+                                            </tr>
+                                        </tbody>
+                                        
+                                        <!-- Edit Mode -->
+                                        <tbody v-else>
+                                            <tr v-for="(pkg, idx) in editablePackages[activeSession.id]" :key="idx" class="border-b border-gray-800 bg-[#1e1e20] hover:bg-[#252528]">
+                                                <td class="px-2 py-2">
+                                                    <input type="text" v-model="pkg.provider" class="w-full bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none" />
+                                                </td>
+                                                <td class="px-2 py-2 text-right">
+                                                    <input type="number" step="0.1" v-model="pkg.gb" class="w-full max-w-[80px] bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none text-right" />
+                                                </td>
+                                                <td class="px-2 py-2 text-right">
+                                                    <input type="number" v-model="pkg.days" class="w-full max-w-[80px] bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none text-right" />
+                                                </td>
+                                                <td class="px-2 py-2 text-right">
+                                                    <input type="number" v-model="pkg.price" class="w-full max-w-[100px] bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none text-right" />
+                                                </td>
+                                                <td class="px-2 py-2 text-center">
+                                                    <button @click="deleteRow(activeSession.id, idx)" class="text-red-400 hover:text-red-300 p-1.5 bg-red-900/30 rounded" title="Hapus Baris">
+                                                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                            <tr>
+                                                <td colspan="5" class="px-4 py-4 bg-[#161618]">
+                                                    <div class="flex justify-between items-center">
+                                                        <button @click="addEmptyRow(activeSession.id)" class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded text-xs text-white transition flex items-center gap-1">
+                                                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                                                            Tambah Data Manual
+                                                        </button>
+                                                        <button @click="savePackages(activeSession.id)" class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white font-medium transition shadow-lg flex items-center gap-2" :disabled="savingTable[activeSession.id]">
+                                                            <svg v-if="savingTable[activeSession.id]" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                                            <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                                            Simpan Perubahan
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </div>
                             </div>
                         </div>
 

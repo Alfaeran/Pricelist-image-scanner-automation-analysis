@@ -1,0 +1,14 @@
+scanner-app/node_modules
+scanner-app/vendor
+scanner-app/venv
+scanner-app/.env
+__pycache__
+.git
+.gitignore
+.vscode
+.idea
+.gemini
+*.db
+*.sqlite3
+data/chatbot_test_results.json
+data/api_keys.json

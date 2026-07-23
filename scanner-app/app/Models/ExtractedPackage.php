@@ -18,6 +18,7 @@ class ExtractedPackage extends Model
         'days',
         'yield_val',
         'category',
+        'product_type',
         'image_timestamp',
         'image_location'
     ];

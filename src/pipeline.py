@@ -63,7 +63,8 @@ HEADER_COLORS = {
 MODEL_NAME = "gemini-3.1-flash-lite"
 
 EXTRACTION_PROMPT = """
-Ekstrak semua paket data internet dari gambar ini.
+Ekstrak SEMUA paket data internet dari gambar ini.
+SANGAT PENTING: JANGAN LEWATKAN SATUPUN BARIS DATA. EKSTRAK 100% SEMUA PAKET YANG ADA DI GAMBAR TANPA TERKECUALI!
 
 ATURAN:
 - Provider harus salah satu dari: "TSEL", "IM3", "3ID", "XL", "AXIS", "SF"
@@ -72,10 +73,11 @@ ATURAN:
 - price: integer, gb: float, days: integer
 - Abaikan baris jika price, gb, atau days kosong
 - Abaikan watermark, botol, rak, orang, dan objek non-data
+- Tentukan `product_type`: Jika teks mengandung kata seperti "Perdana", "SP", "Starter Pack", "KPK" isi dengan "Perdana" (Baby Care < 90 hari). Jika teks mengandung "Isi Ulang", "Voucher", "VC", "Inject" isi dengan "Isi Ulang" (Non-Baby Care > 90 hari).
 - Ekstrak juga `image_timestamp` (waktu pengambilan foto) dan `image_location` (lokasi/geolokasi) jika ada di dalam gambar overlay. Jika tidak ada, isi null.
 
 Kembalikan JSON array saja, tanpa teks tambahan:
-[{"provider":"...","price":0,"gb":0.0,"days":0,"image_timestamp":"2024-01-01 12:00","image_location":"Jakarta"}]
+[{"provider":"...","price":0,"gb":0.0,"days":0,"product_type":"Perdana","image_timestamp":"2024-01-01 12:00","image_location":"Jakarta"}]
 """.strip()
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
@@ -216,9 +218,7 @@ def _parse_gemini_response(raw_text: str) -> list[dict]:
 def extract_packages_gemini(
     image_bytes_list: list[bytes],
     api_keys: list[str],
-    key_index: int = 0,
-    max_retries: int = 6,
-    model: str = MODEL_NAME,
+    models: list[str] = [MODEL_NAME],
     on_status: callable | None = None,
     custom_prompt: str | None = None,
 ) -> tuple[list[dict], int]:
@@ -249,56 +249,76 @@ def extract_packages_gemini(
     from google import genai
     from google.genai import types
 
-    current_key_idx = key_index % len(api_keys)
+    import time
+    
+    current_key_idx = 0
+    all_extracted_data = []
 
-    for attempt in range(max_retries):
-        try:
-            client = genai.Client(api_key=api_keys[current_key_idx])
+    for idx, img_bytes in enumerate(image_bytes_list):
+        if on_status:
+            on_status(f"Mengekstrak data dari gambar ({idx + 1}/{len(image_bytes_list)})...")
+            
+        success = False
+        max_attempts = len(api_keys) * len(models)
+        
+        for attempt in range(max_attempts):
+            model_idx = attempt // len(api_keys)
+            current_model = models[model_idx]
+            
+            try:
+                client = genai.Client(api_key=api_keys[current_key_idx])
 
-            # Build final prompt
-            final_prompt = EXTRACTION_PROMPT
-            if custom_prompt and custom_prompt.strip() and custom_prompt.strip() != "Tolong scan gambar ini.":
-                final_prompt = f"{final_prompt}\n\nINSTRUKSI TAMBAHAN DARI USER:\n{custom_prompt.strip()}"
+                # Build final prompt
+                final_prompt = EXTRACTION_PROMPT
+                if custom_prompt and custom_prompt.strip() and custom_prompt.strip() != "Tolong scan gambar ini.":
+                    final_prompt = f"{final_prompt}\n\nINSTRUKSI TAMBAHAN DARI USER:\n{custom_prompt.strip()}"
 
-            # Build image parts from all bytes
-            parts = [final_prompt]
-            for img_bytes in image_bytes_list:
-                parts.append(types.Part.from_bytes(
-                    data=img_bytes, mime_type="image/jpeg"
-                ))
+                # Send 1 image per request to prevent LLM from being lazy and skipping rows
+                parts = [
+                    final_prompt,
+                    types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg")
+                ]
 
-            # Use structured JSON output for speed (no persona logs)
-            config = types.GenerateContentConfig(
-                response_mime_type="application/json",
-            )
-
-            response = client.models.generate_content(
-                model=model,
-                contents=parts,
-                config=config,
-            )
-
-            data = _parse_gemini_response(response.text)
-            return data, current_key_idx
-
-        except Exception as e:
-            error_msg = str(e)
-            if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg:
-                # Rotate to next API key
-                current_key_idx = (current_key_idx + 1) % len(api_keys)
-                msg = (
-                    f"API Limit/Server Sibuk (Percobaan {attempt + 1}/{max_retries}). "
-                    f"Mencoba API Key berikutnya..."
+                # Use structured JSON output with low temperature
+                config = types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.0,
                 )
-                if on_status:
-                    on_status(msg)
-                time.sleep(2)
-            else:
-                raise RuntimeError(f"Gagal ekstraksi Gemini: {error_msg}")
 
-    raise RuntimeError(
-        f"Gagal setelah {max_retries} percobaan. Semua API key telah dicoba."
-    )
+                response = client.models.generate_content(
+                    model=current_model,
+                    contents=parts,
+                    config=config,
+                )
+
+                data = _parse_gemini_response(response.text)
+                all_extracted_data.extend(data)
+                success = True
+                break # Move to next image
+
+            except Exception as e:
+                error_msg = str(e)
+                if "503" in error_msg or "UNAVAILABLE" in error_msg or "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
+                    current_key_idx = (current_key_idx + 1) % len(api_keys)
+                    msg = (
+                        f"Limit model {current_model} pd Gb {idx+1} (Coba {attempt + 1}/{max_attempts}). "
+                        f"Mencoba key/model lain..."
+                    )
+                    if on_status:
+                        on_status(msg)
+                    time.sleep(2)
+                elif "404" in error_msg or "NOT_FOUND" in error_msg or "403" in error_msg or "PERMISSION_DENIED" in error_msg:
+                    # Model not available or forbidden for this API key. Instantly rotate key.
+                    current_key_idx = (current_key_idx + 1) % len(api_keys)
+                else:
+                    raise RuntimeError(f"Gagal ekstraksi Gemini untuk Gambar {idx+1}: {error_msg}")
+
+        if not success:
+            raise RuntimeError(
+                f"Gagal memproses Gambar {idx+1} setelah {max_attempts} percobaan. Semua API key dan model cadangan telah habis."
+            )
+
+    return all_extracted_data, current_key_idx
 
 
 # ══════════════════════════════════════════════════════════════════════════════
