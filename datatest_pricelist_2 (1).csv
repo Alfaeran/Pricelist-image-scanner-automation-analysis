@@ -1,0 +1,186 @@
+,,,,,,
+,Perbandingan Paket Data,,,,,
+,,,,,,
+,Provider,Package Name,Price,GB,Days,Price/GB
+,BY.U,,Rp42.000,7,30,Rp6.000
+,BY.U,,Rp48.000,11,30,Rp4.364
+,BY.U,,Rp50.000,15,30,Rp3.333
+,BY.U,,Rp80.000,33,30,Rp2.424
+,BY.U,,Rp82.000,35,30,Rp2.343
+,BY.U,,Rp105.000,65,28,Rp1.615
+,BY.U,,Rp110.000,57,30,Rp1.930
+,BY.U,,Rp15.000,6,3,Rp2.500
+,BY.U,,Rp18.000,"7,5",5,Rp2.400
+,BY.U,,Rp15.000,4,7,Rp3.750
+,BY.U,,Rp18.000,"6,5",7,Rp2.769
+,BY.U,,Rp23.000,8,7,Rp2.875
+,BY.U,,Rp28.000,12,7,Rp2.333
+,BY.U,,Rp21.000,3,14,Rp7.000
+,BY.U,,Rp30.000,8,14,Rp3.750
+,XL,Data Flex,Rp37.000,7,28,Rp5.286
+,XL,Data Flex,Rp45.000,10,28,Rp4.500
+,XL,Data Flex,Rp55.000,16,28,Rp3.438
+,XL,Data Flex,Rp62.000,23,28,Rp2.696
+,XL,Data Flex,Rp72.000,31,28,Rp2.323
+,XL,Data Flex,Rp82.000,40,28,Rp2.050
+,XL,Data Flex Max,Rp93.000,50,28,Rp1.860
+,XL,Data Flex Max,Rp103.000,65,28,Rp1.585
+,XL,Data Flex Max,Rp130.000,100,28,Rp1.300
+,XL,Data Flex Max,Rp155.000,150,28,Rp1.033
+,XL,Data Flex Max,Rp210.000,300,28,Rp700
+,XL,Data Flex Mini,Rp14.000,4,3,Rp3.500
+,XL,Data Flex Mini,Rp16.000,6,3,Rp2.667
+,XL,Data Flex Mini,Rp22.000,20,3,Rp1.100
+,XL,Data Flex Mini,Rp17.000,4,7,Rp4.250
+,XL,Data Flex Mini,Rp21.000,6,7,Rp3.500
+,XL,Data Flex Mini,Rp27.000,10,7,Rp2.700
+,XL,Data Flex Mini,Rp32.000,20,7,Rp1.600
+,XL,Data Flex Mini,Rp43.000,40,7,Rp1.075
+,XL,Data Flex Mini,Rp53.000,75,7,Rp707
+,XL,Data Flex Mini,Rp23.000,3,14,Rp7.667
+,XL,Data Flex Mini,Rp31.000,8,14,Rp3.875
+,XL,Data Flex Mini,Rp41.000,15,14,Rp2.733
+,XL,Data Flex Mini,Rp52.000,30,14,Rp1.733
+,XL,Data Flex Mini,Rp80.000,75,14,Rp1.067
+,TSEL,,Rp13.000,6,2,Rp2.167
+,TSEL,,Rp16.000,5,3,Rp3.200
+,TSEL,,Rp16.000,4,5,Rp4.000
+,TSEL,,Rp20.000,6,5,Rp3.333
+,TSEL,,Rp23.000,7,5,Rp3.286
+,TSEL,,Rp25.000,9,5,Rp2.778
+,TSEL,,Rp30.000,9,7,Rp3.333
+,TSEL,,Rp30.000,5,14,Rp6.000
+,TSEL,,Rp30.000,7,14,Rp4.286
+,TSEL,,Rp40.000,7,28,Rp5.714
+,TSEL,,Rp50.000,10,28,Rp5.000
+,TSEL,,Rp58.000,18,28,Rp3.222
+,TSEL,,Rp75.000,25,28,Rp3.000
+,TSEL,,Rp98.000,42,28,Rp2.333
+,TSEL,Data Flash Jatim,Rp25.000,2,30,Rp12.500
+,TSEL,Telkomsel Flash,Rp18.000,1,30,Rp18.000
+,TSEL,Telkomsel Flash,Rp35.000,2,30,Rp17.500
+,TSEL,Telkomsel Flash,Rp38.000,3,30,Rp12.667
+,TSEL,Telkomsel Flash,Rp55.000,4,30,Rp13.750
+,AXIS,AIGO Bronet,Rp37.000,7,28,Rp5.286
+,AXIS,AIGO Bronet,Rp42.000,10,28,Rp4.200
+,AXIS,AIGO Bronet,Rp52.000,16,28,Rp3.250
+,AXIS,AIGO Bronet,Rp68.000,26,28,Rp2.615
+,AXIS,AIGO Bronet,Rp82.000,40,28,Rp2.050
+,AXIS,AIGO Bronet,Rp103.000,65,28,Rp1.585
+,AXIS,AIGO Bronet,Rp155.000,150,28,Rp1.033
+,AXIS,AIGO Bronet,Rp215.000,250,28,Rp860
+,AXIS,AIGO Bronet,Rp270.000,400,28,Rp675
+,AXIS,AIGO Bronet,Rp315.000,600,28,Rp525
+,AXIS,AIGO Mini Bronet,Rp25.000,30,3,Rp833
+,AXIS,AIGO Mini Bronet,Rp15.000,4,5,Rp3.750
+,AXIS,AIGO Mini Bronet,Rp16.000,"6,5",5,Rp2.462
+,AXIS,AIGO Mini Bronet,Rp15.000,3,7,Rp5.000
+,AXIS,AIGO Mini Bronet,Rp25.000,10,7,Rp2.500
+,AXIS,AIGO Mini Bronet,Rp32.000,17,7,Rp1.882
+,AXIS,AIGO Mini Bronet,Rp35.000,23,7,Rp1.522
+,AXIS,AIGO Mini Bronet,Rp24.000,5,14,Rp4.800
+,AXIS,AIGO Mini Bronet,Rp30.000,8,14,Rp3.750
+,AXIS,AIGO Mini Bronet,Rp50.000,25,14,Rp2.000
+,SF,Smartfren Uns,Rp36.000,7,28,Rp5.143
+,SF,Smartfren Uns,Rp44.000,10,28,Rp4.400
+,SF,Smartfren Uns,Rp52.000,16,28,Rp3.250
+,SF,Smartfren Uns,Rp62.000,24,28,Rp2.583
+,SF,Smartfren Uns,Rp81.000,40,28,Rp2.025
+,SF,Smartfren Uns,Rp130.000,100,28,Rp1.300
+,SF,Smartfren Uns,Rp72.000,30,30,Rp2.400
+,SF,Smartfren Uns,Rp168.000,100,30,Rp1.680
+,SF,Smartfren Plan Kuota,Rp110.000,66,28,Rp1.667
+,SF,Smartfren Plan Kuota,Rp155.000,150,28,Rp1.033
+,SF,Smartfren Plan Kuota,Rp48.000,14,30,Rp3.429
+,SF,Smartfren Plan Kuota,Rp68.000,24,30,Rp2.833
+,SF,Smartfren Plan Kuota,Rp95.000,45,30,Rp2.111
+,SF,Smartfren Plan Kuota,Rp142.000,85,30,Rp1.671
+,SF,Smartfren Unlimited,Rp72.000,28,28,Rp2.571
+,SF,Smartfren Unlimited,Rp85.000,42,28,Rp2.024
+,SF,Smartfren Unlimited,Rp98.000,56,28,Rp1.750
+,SF,Smartfren Unlimited,Rp130.000,84,28,Rp1.548
+,SF,Smartfren Unlimited,Rp155.000,140,28,Rp1.107
+,SF,Smartfren Uns,Rp13.000,6,3,Rp2.167
+,SF,Smartfren Uns,Rp16.000,10,3,Rp1.600
+,SF,Smartfren Uns,Rp22.000,20,3,Rp1.100
+,SF,Smartfren Uns,Rp21.000,10,7,Rp2.100
+,SF,Smartfren Uns,Rp42.000,40,7,Rp1.050
+,SF,Smartfren Uns,Rp14.000,2,10,Rp7.000
+,SF,Smartfren Uns,Rp31.000,12,14,Rp2.583
+,SF,Smartfren Uns,Rp41.000,20,14,Rp2.050
+,SF,Smartfren Plan Kuota,Rp8.000,1,3,Rp8.000
+,SF,Smartfren Plan Kuota,Rp12.000,4,3,Rp3.000
+,SF,Smartfren Plan Kuota,Rp16.000,4,5,Rp4.000
+,SF,Smartfren Plan Kuota,Rp17.000,6,7,Rp2.833
+,SF,Smartfren Plan Kuota,Rp21.000,4,14,Rp5.250
+,SF,Smartfren Plan Kuota,Rp42.000,17,14,Rp2.471
+,SF,Smartfren Unlimited,Rp16.000,2,3,Rp8.000
+,SF,Smartfren Unlimited,Rp17.000,3,3,Rp5.667
+,SF,Smartfren Unlimited,Rp22.000,5,3,Rp4.400
+,SF,Smartfren Unlimited,Rp19.000,7,7,Rp2.714
+,SF,Smartfren Unlimited,Rp26.000,14,7,Rp1.857
+,SF,Smartfren Unlimited,Rp34.000,21,7,Rp1.619
+,SF,Smartfren Unlimited,Rp42.000,35,7,Rp1.200
+,SF,Smartfren Unlimited,Rp36.000,14,14,Rp2.571
+,SF,Smartfren Unlimited,Rp52.000,28,14,Rp1.857
+,SF,Smartfren Unlimited,Rp85.000,70,14,Rp1.214
+,XL,SP,Rp20.000,3,30,Rp6.667
+,XL,SP,Rp32.000,10,28,Rp3.200
+,XL,SP,Rp48.000,23,28,Rp2.087
+,XL,SP,Rp65.000,40,28,Rp1.625
+,XL,SP,Rp99.000,100,28,Rp990
+,AXIS,SP,Rp20.000,3,30,Rp6.667
+,AXIS,SP,Rp26.000,7,28,Rp3.714
+,AXIS,SP,Rp32.000,10,28,Rp3.200
+,AXIS,SP,Rp42.000,16,28,Rp2.625
+,AXIS,SP,Rp78.000,65,28,Rp1.200
+,SF,SP,Rp20.000,3,30,Rp6.667
+,SF,SP,Rp27.000,7,28,Rp3.857
+,TSEL,SP,Rp28.000,3,30,Rp9.333
+,BY.U,SP,Rp26.000,6,30,Rp4.333
+,BY.U,SP,Rp32.000,10,30,Rp3.200
+,IM3,SP,Rp20.000,3,30,Rp6.667
+,IM3,SP,Rp32.000,10,30,Rp3.200
+,3,SP,Rp20.000,3,30,Rp6.667
+,3,Happy,Rp37.000,7,28,Rp5.286
+,3,Happy,Rp42.000,10,28,Rp4.200
+,3,Happy,Rp51.000,16,28,Rp3.188
+,3,Happy,Rp56.000,18,28,Rp3.111
+,3,Happy,Rp61.000,24,28,Rp2.542
+,3,Happy,Rp71.000,30,28,Rp2.367
+,3,Happy,Rp85.000,42,28,Rp2.024
+,3,Happy,Rp102.000,65,28,Rp1.569
+,3,Happy,Rp125.000,100,28,Rp1.250
+,3,Happy,Rp152.000,75,60,Rp2.027
+,3,Happy,Rp155.000,150,28,Rp1.033
+,3,Happy,Rp360.000,175,180,Rp2.057
+,3,Happy,Rp515.000,250,365,Rp2.060
+,3,Happy,Rp8.000,6,1,Rp1.333
+,3,Happy,Rp10.000,10,1,Rp1.000
+,3,Happy,Rp13.000,7,2,Rp1.857
+,3,Happy,Rp15.000,"3,5",3,Rp4.286
+,3,Happy,Rp18.000,8,3,Rp2.250
+,3,Happy,Rp20.000,10,5,Rp2.000
+,3,Happy,Rp22.000,11,5,Rp2.000
+,3,Happy,Rp25.000,10,7,Rp2.500
+,3,Happy,Rp28.000,7,14,Rp4.000
+,3,Happy,Rp35.000,10,14,Rp3.500
+,IM3,Freedom Internet,Rp38.000,7,28,Rp5.429
+,IM3,Freedom Internet,Rp46.000,9,28,Rp5.111
+,IM3,Freedom Internet,Rp51.000,16,28,Rp3.188
+,IM3,Freedom Internet,Rp61.000,24,28,Rp2.542
+,IM3,Freedom Internet,Rp68.000,26,28,Rp2.615
+,IM3,Freedom Internet,Rp71.000,30,28,Rp2.367
+,IM3,Freedom Internet,Rp81.000,40,28,Rp2.025
+,IM3,Freedom Internet,Rp103.000,65,28,Rp1.585
+,IM3,Freedom Internet,Rp130.000,100,28,Rp1.300
+,IM3,Freedom Internet,Rp155.000,150,28,Rp1.033
+,IM3,Freedom Internet,Rp14.000,"3,5",3,Rp4.000
+,IM3,Freedom Internet,Rp17.000,4,5,Rp4.250
+,IM3,Freedom Internet,Rp16.000,6,3,Rp2.667
+,IM3,Freedom Internet,Rp17.000,6,5,Rp2.833
+,IM3,Freedom Internet,Rp20.000,9,5,Rp2.222
+,IM3,Freedom Internet,Rp26.000,9,7,Rp2.889
+,IM3,Freedom Internet,Rp33.000,17,7,Rp1.941
+,IM3,Freedom Internet,Rp25.000,7,14,Rp3.571
+,IM3,Freedom Internet,Rp31.000,10,14,Rp3.100

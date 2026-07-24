@@ -13,6 +13,7 @@ class ExtractedPackage extends Model
     protected $fillable = [
         'pricelist_id',
         'provider',
+        'package_name',
         'price',
         'gb',
         'days',

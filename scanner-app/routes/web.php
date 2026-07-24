@@ -1,7 +1,10 @@
 <?php
 
 use App\Http\Controllers\ProfileController;
+use App\Http\Controllers\ApiKeyController;
+use App\Http\Controllers\ChatController;
 use App\Http\Controllers\ScannerController;
+use App\Http\Controllers\VlrController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -25,9 +28,6 @@ Route::middleware('auth')->group(function () {
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
 });
 
-use App\Http\Controllers\ApiKeyController;
-use App\Http\Controllers\ChatController;
-
 Route::get('/phpinfo', function () {
     return phpinfo();
 });
@@ -37,8 +37,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/scanner', [ScannerController::class, 'store'])->name('scanner.store');
     Route::delete('/scanner/{pricelist}', [ScannerController::class, 'destroy'])->name('scanner.destroy');
     Route::get('/scanner/{pricelist}/export', [ScannerController::class, 'export'])->name('scanner.export');
+    Route::get('/scanner/{pricelist}/export-csv', [ScannerController::class, 'exportCsv'])->name('scanner.exportCsv');
     Route::get('/scanner/{pricelist}/insights', [ScannerController::class, 'insights'])->name('scanner.insights');
     Route::post('/scanner/{pricelist}/chat', [ChatController::class, 'store'])->name('scanner.chat');
+    Route::delete('/scanner/{pricelist}/message/{chatMessage}/chart', [ChatController::class, 'destroyChart'])->name('scanner.chat.destroyChart');
     Route::post('/scanner/{pricelist}/retry', [ScannerController::class, 'retry'])->name('scanner.retry');
     Route::post('/scanner/{pricelist}/cancel', [ScannerController::class, 'cancel'])->name('scanner.cancel');
     Route::put('/scanner/{pricelist}/rename', [ScannerController::class, 'rename'])->name('scanner.rename');
@@ -46,6 +48,10 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::put('/scanner/{pricelist}/packages', [ScannerController::class, 'updatePackages'])->name('scanner.packages.update');
 
     Route::post('/api/scanner/{pricelist}/status', [ScannerController::class, 'updateStatus'])->name('scanner.status.update')->withoutMiddleware(['auth', 'verified']);
+
+    // VLR Checker
+    Route::get('/vlr-checker', [VlrController::class, 'index'])->name('vlr.index');
+    Route::post('/vlr-checker/check', [VlrController::class, 'check'])->name('vlr.check');
 
     // API Key management
     Route::get('/api/keys', [ApiKeyController::class, 'index'])->name('apikeys.index');

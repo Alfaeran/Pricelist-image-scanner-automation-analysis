@@ -17,7 +17,9 @@ const renderChart = () => {
         chartInstance.destroy();
     }
     if (canvasRef.value && props.config) {
-        chartInstance = new Chart(canvasRef.value, props.config);
+        // Clone config so Chart.js doesn't mutate the Vue reactive object and trigger infinite loop
+        const configClone = JSON.parse(JSON.stringify(props.config));
+        chartInstance = new Chart(canvasRef.value, configClone);
     }
 };
 

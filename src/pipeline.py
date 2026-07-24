@@ -27,7 +27,7 @@ from PIL import Image
 # Constants
 # ══════════════════════════════════════════════════════════════════════════════
 
-PROVIDER_CODES = ["IM3", "3ID", "TSEL", "XL", "AXIS", "SF"]
+PROVIDER_CODES = ["IM3", "3ID", "TSEL", "XL", "AXIS", "SF", "BYU"]
 
 PROVIDER_MAPPING = {
     "INDOSAT": "IM3",
@@ -37,6 +37,8 @@ PROVIDER_MAPPING = {
     "XL": "XL",
     "AXIS": "AXIS",
     "3": "3ID",
+    "BY.U": "BYU",
+    "BYU": "BYU",
 }
 
 CATEGORIES_ORDER = [
@@ -57,6 +59,7 @@ HEADER_COLORS = {
     "XL": "0070C0",
     "AXIS": "7030A0",
     "SF": "FF00FF",
+    "BYU": "FF6600",
 }
 
 # Konfigurasi Model
@@ -67,9 +70,14 @@ Ekstrak SEMUA paket data internet dari gambar ini.
 SANGAT PENTING: JANGAN LEWATKAN SATUPUN BARIS DATA. EKSTRAK 100% SEMUA PAKET YANG ADA DI GAMBAR TANPA TERKECUALI!
 
 ATURAN:
-- Provider harus salah satu dari: "TSEL", "IM3", "3ID", "XL", "AXIS", "SF"
+- Provider harus salah satu dari: "TSEL", "IM3", "3ID", "XL", "AXIS", "SF", "BYU"
 - Konversi harga: K = ribuan (37K -> 37000). Abaikan "Rp", titik, spasi.
-- UNLIMITED + GB/hari: kalikan (contoh 3GB/hari x 28hari = 84.0 GB)
+- `package_name`: Ambil nama paket yang biasanya ada di atas banner atau di samping logo brand (misal: "Smartfren Unlimited", "Freedom Internet"). Jika tidak ada, kosongkan string "".
+- PERKALIAN GB HANYA UNTUK PAKET UNLIMITED: Jika paket secara tertulis menyebutkan "Unlimited" dan formatnya GB/hari (misal 2GB/hari selama 28 hari), barulah kalikan GB dengan hari (menjadi 56GB). Jika bukan paket unlimited (hanya paket biasa misal 10GB 28 hari), JANGAN DIKALIKAN. Tulis saja 10GB.
+- KOREKSI POLA (PRIOR KNOWLEDGE): 
+  - SMARTFREN: Sering terjadi kesalahan baca. Smartfren 44K/45K biasanya 10GB (bukan 280GB). 62K biasanya 24GB. 81K biasanya 40GB. 130K biasanya 100GB.
+  - IM3 / INDOSAT: Perhatikan baik-baik baris harga dan GB agar tidak tertukar/offset. Harga 38K=7GB, 46K=9GB, 51K=16GB, 61K=24GB, 68K/71K=26GB/30GB, 81K=40GB, 103K=65GB. Pastikan membaca dalam baris yang sama.
+  - AXIS: 25K biasanya 30GB, BUKAN 3GB.
 - price: integer, gb: float, days: integer
 - Abaikan baris jika price, gb, atau days kosong
 - Abaikan watermark, botol, rak, orang, dan objek non-data
@@ -77,7 +85,7 @@ ATURAN:
 - Ekstrak juga `image_timestamp` (waktu pengambilan foto) dan `image_location` (lokasi/geolokasi) jika ada di dalam gambar overlay. Jika tidak ada, isi null.
 
 Kembalikan JSON array saja, tanpa teks tambahan:
-[{"provider":"...","price":0,"gb":0.0,"days":0,"product_type":"Perdana","image_timestamp":"2024-01-01 12:00","image_location":"Jakarta"}]
+[{"provider":"...","package_name":"...","price":0,"gb":0.0,"days":0,"product_type":"Perdana","image_timestamp":"2024-01-01 12:00","image_location":"Jakarta"}]
 """.strip()
 
 _IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tiff"}
@@ -150,6 +158,28 @@ def is_zip_file(filename: str, data: bytes | None = None) -> bool:
     return False
 
 
+def extract_metadata(filename: str, image_bytes: bytes) -> str:
+    """Extract EXIF metadata and format it with filename."""
+    from PIL.ExifTags import TAGS
+    
+    metadata = {
+        "Filename": filename
+    }
+    
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        exif = img._getexif()
+        if exif:
+            for tag_id, value in exif.items():
+                tag = TAGS.get(tag_id, tag_id)
+                if tag in ["DateTimeOriginal", "DateTime", "GPSInfo"]:
+                    metadata[tag] = str(value)
+    except Exception:
+        pass
+        
+    return "\n".join(f"{k}: {v}" for k, v in metadata.items())
+
+
 def extract_from_zip(zip_bytes: bytes) -> list[tuple[str, bytes]]:
     """Extract image files from a ZIP archive.
 
@@ -216,7 +246,7 @@ def _parse_gemini_response(raw_text: str) -> list[dict]:
 
 
 def extract_packages_gemini(
-    image_bytes_list: list[bytes],
+    image_data_list: list[tuple[bytes, str]],
     api_keys: list[str],
     models: list[str] = [MODEL_NAME],
     on_status: callable | None = None,
@@ -226,8 +256,8 @@ def extract_packages_gemini(
 
     Parameters
     ----------
-    image_bytes_list : list[bytes]
-        List of preprocessed JPEG image bytes.
+    image_data_list : list[tuple[bytes, str]]
+        List of tuples containing (preprocessed_image_bytes, metadata_text).
     api_keys : list[str]
         List of Gemini API keys for rotation.
     key_index : int
@@ -254,9 +284,9 @@ def extract_packages_gemini(
     current_key_idx = 0
     all_extracted_data = []
 
-    for idx, img_bytes in enumerate(image_bytes_list):
+    for idx, (img_bytes, metadata_text) in enumerate(image_data_list):
         if on_status:
-            on_status(f"Mengekstrak data dari gambar ({idx + 1}/{len(image_bytes_list)})...")
+            on_status(f"Mengekstrak data dari gambar ({idx + 1}/{len(image_data_list)})...")
             
         success = False
         max_attempts = len(api_keys) * len(models)
@@ -272,6 +302,9 @@ def extract_packages_gemini(
                 final_prompt = EXTRACTION_PROMPT
                 if custom_prompt and custom_prompt.strip() and custom_prompt.strip() != "Tolong scan gambar ini.":
                     final_prompt = f"{final_prompt}\n\nINSTRUKSI TAMBAHAN DARI USER:\n{custom_prompt.strip()}"
+                    
+                if metadata_text:
+                    final_prompt = f"{final_prompt}\n\nMETADATA GAMBAR (Gunakan ini untuk image_timestamp dan image_location):\n{metadata_text}"
 
                 # Send 1 image per request to prevent LLM from being lazy and skipping rows
                 parts = [

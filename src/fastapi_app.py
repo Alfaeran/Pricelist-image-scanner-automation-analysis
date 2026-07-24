@@ -6,10 +6,11 @@ import json
 import logging
 
 # Import existing pipeline functions
-from pipeline import preprocess_image, extract_packages_gemini, generate_excel, generate_summary_insights, is_zip_file, extract_from_zip
+from pipeline import preprocess_image, extract_packages_gemini, generate_excel, generate_summary_insights, is_zip_file, extract_from_zip, extract_metadata
 import pandas as pd
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse, Response
+from google import genai
 
 app = FastAPI(title="Pricelist Scanner API")
 logging.basicConfig(level=logging.INFO)
@@ -35,11 +36,13 @@ async def extract_data(
                 # Ekstrak gambar dari ZIP
                 extracted = extract_from_zip(file_bytes)
                 for name, img_bytes in extracted:
+                    metadata_str = extract_metadata(name, img_bytes)
                     processed_bytes = preprocess_image(img_bytes)
-                    processed_images.append(processed_bytes)
+                    processed_images.append((processed_bytes, metadata_str))
             else:
+                metadata_str = extract_metadata(file.filename, file_bytes)
                 processed_bytes = preprocess_image(file_bytes)
-                processed_images.append(processed_bytes)
+                processed_images.append((processed_bytes, metadata_str))
                 
         if not processed_images:
             raise ValueError("Tidak ada gambar valid yang ditemukan di dalam file upload.")
@@ -66,7 +69,7 @@ async def extract_data(
 
         # Call Gemini via our pipeline
         data, _ = extract_packages_gemini(
-            image_bytes_list=processed_images,
+            image_data_list=processed_images,
             api_keys=keys_list,
             models=models_list,
             custom_prompt=prompt,
@@ -81,6 +84,7 @@ async def extract_data(
 
 class PackageItem(BaseModel):
     provider: str
+    package_name: str = ""
     price: int
     gb: float
     days: int
@@ -142,7 +146,7 @@ async def check_api_key(req: CheckRequest):
         client = genai.Client(api_key=req.api_key)
         # We want to list models and check if they are suitable for generateContent
         supported_models = []
-        for m in client.models.list_models():
+        for m in client.models.list():
             # Filter models containing gemini in their name and supporting text/image generation
             name = m.name.replace("models/", "")
             if "gemini" in name:
@@ -176,30 +180,57 @@ async def chat_with_data(req: ChatRequest):
         if not models_list:
             models_list = ["gemini-2.0-flash"]
         
-        # Format context data
+        # Get available columns
         df = pd.DataFrame([p.dict() for p in req.packages])
-        context_str = df.to_string(index=False)
+        available_columns = ", ".join(df.columns.tolist())
+        # Format data as a minimal JSON string to save tokens but provide full context
+        minimal_packages = []
+        for p in req.packages:
+            minimal_packages.append({
+                "prov": p.provider,
+                "name": p.package_name,
+                "price": p.price,
+                "gb": p.gb,
+                "days": p.days,
+                "yield": p.yield_val,
+                "cat": p.category
+            })
+        data_json = json.dumps(minimal_packages, separators=(',', ':'))
         
         prompt = f"""
-Anda adalah Data Analyst assistant.
-Data saat ini:
-{context_str}
+Anda adalah asisten Data Analyst Senior. 
+Tugas Anda adalah membaca data paket internet di bawah ini dan menjawab pertanyaan user dengan CERDAS, ANALITIS, dan AKURAT berdasarkan data tersebut.
+
+Data Paket Internet (JSON):
+{data_json}
+
+Keterangan Kolom Data:
+- prov: Provider
+- name: Nama Paket
+- price: Harga dalam Rupiah
+- gb: Kuota dalam Gigabyte
+- days: Masa Aktif dalam hari
+- yield: Nilai Yield (Harga dibagi GB, semakin KECIL nilainya berarti paket tersebut semakin MURAH/WORTH IT per GB-nya).
+- cat: Kategori Paket
 
 Pertanyaan User: {req.message}
 
-Jawab dengan ramah, singkat, dan tepat.
-Jika pertanyaan berkaitan dengan grafik/visualisasi, Anda BISA mengembalikan konfigurasi Chart.js di dalam block ```json ... ```.
+PENTING: Jawab SELALU dengan format JSON (dan HANYA JSON) di dalam blok ```json ... ```.
 
-Contoh JSON Chart.js:
-```json
+Format JSON yang diizinkan:
 {{
-  "type": "bar",
-  "data": {{ "labels": ["A", "B"], "datasets": [{{ "label": "Harga", "data": [10, 20] }}] }},
-  "options": {{ "responsive": true }}
+  "action": "chart" | "text",
+  "text": "Jawaban analisis Anda secara detail dan ramah berdasarkan data di atas.",
+  "group_by": "provider" | "category" | "price" | "gb" | "days", 
+  "metric": "count" | "average_price",
+  "chart_type": "pie" | "bar" | "line" | "doughnut",
+  "title": "Judul Grafik"
 }}
-```
 
-Jawaban Anda:
+Aturan Emas:
+1. Jika user HANYA BERTANYA (misal: "mana paket yang paling worth it", "ada berapa paket telkomsel", "rekomendasikan paket bulanan termurah"), SET action="text", dan tulis analisis Anda di "text" secara lengkap. JANGAN hasilkan grafik kecuali diminta secara eksplisit.
+2. Jika user SECARA EKSPLISIT meminta grafik/visualisasi (misal: "tolong buatkan grafik perbandingan", "tampilkan pie chart", "gambarkan chart"), barulah set action="chart" dan isi konfigurasi grafik. 
+3. Saat menjawab dengan teks, sebutkan Provider, Harga, GB, dan Masa Aktif paket yang relevan. Bandingkan nilai 'yield' untuk membuktikan mana yang paling "worth it" (yield terkecil adalah yang termurah per GB).
 """
         config = types.GenerateContentConfig(temperature=0.0)
         
@@ -236,16 +267,66 @@ Jawaban Anda:
         text = response.text
         chart_config = None
         
-        # Extract JSON if exists (more robust regex)
+        # Extract JSON instruction from LLM
         import re
         match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text, re.IGNORECASE)
-        if match:
-            try:
-                chart_config = json.loads(match.group(1))
-                text = text.replace(match.group(0), "").strip()
-            except:
-                pass
+        
+        try:
+            if match:
+                intent = json.loads(match.group(1))
+            else:
+                # Fallback if AI didn't use code blocks but returned raw JSON
+                intent = json.loads(text)
                 
+            text = intent.get("text", "")
+            
+            if intent.get("action") == "chart":
+                group_col = intent.get("group_by")
+                metric = intent.get("metric", "count")
+                chart_type = intent.get("chart_type", "bar")
+                title = intent.get("title", "Visualisasi Data")
+                
+                if group_col in df.columns:
+                    # Calculate locally via Pandas
+                    if metric == "count":
+                        series = df[group_col].value_counts()
+                        label_name = "Jumlah Paket"
+                    elif metric == "average_price":
+                        series = df.groupby(group_col)['price'].mean().round()
+                        label_name = "Rata-rata Harga (Rp)"
+                    else:
+                        series = df[group_col].value_counts()
+                        label_name = "Jumlah"
+                        
+                    data_dict = series.to_dict()
+                    labels = [str(k) for k in data_dict.keys()]
+                    values = list(data_dict.values())
+                    
+                    # Generate Chart.js JSON structure
+                    chart_config = {
+                        "type": chart_type,
+                        "data": {
+                            "labels": labels,
+                            "datasets": [{
+                                "label": label_name,
+                                "data": values,
+                                "borderWidth": 1
+                            }]
+                        },
+                        "options": {
+                            "responsive": True,
+                            "plugins": {
+                                "title": {
+                                    "display": True,
+                                    "text": title
+                                }
+                            }
+                        }
+                    }
+        except Exception as e:
+            logging.error(f"Intent parsing failed: {e}. Raw text: {response.text}")
+            # Fallback to display the raw text if parsing completely fails
+            text = response.text
         return JSONResponse(content={
             "status": "success", 
             "data": {
@@ -255,6 +336,82 @@ Jawaban Anda:
         })
     except Exception as e:
         logging.error(f"Chat failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class SimAgeRequest(BaseModel):
+    provider: str
+    phone_number: str
+
+def check_provider_api(provider: str, phone_number: str) -> int:
+    """
+    Mock function to represent the reverse-engineered API call to the provider.
+    Returns the age of the SIM card in days.
+    """
+    import requests
+    provider = provider.upper().strip()
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+        # "Authorization": "Bearer ...", 
+        # "X-API-Key": "..." 
+    }
+    
+    age_in_days = 0
+    
+    try:
+        if provider == "XL" or provider == "AXIS":
+            # url = "https://api.xl.co.id/v1/check-number"
+            # payload = {"msisdn": phone_number}
+            # response = requests.post(url, json=payload, headers=headers)
+            # data = response.json()
+            # age_in_days = data.get("age_in_days", 0)
+            age_in_days = 45 # Mock babycare
+            pass
+        elif provider == "TSEL" or provider == "TELKOMSEL":
+            # url = "https://api.telkomsel.com/v1/profile"
+            # ...
+            age_in_days = 120 # Mock non-babycare
+            pass
+        elif provider in ["IM3", "INDOSAT", "3ID", "3"]:
+            # ...
+            age_in_days = 90 # Boundary
+            pass
+        else:
+            # Default fallback for unhandled providers
+            age_in_days = -1
+            
+        return age_in_days
+    except Exception as e:
+        logging.error(f"Failed to check SIM age for {phone_number} ({provider}): {str(e)}")
+        return -1
+
+@app.post("/api/check-sim-age")
+async def check_sim_age(req: SimAgeRequest):
+    try:
+        age_days = check_provider_api(req.provider, req.phone_number)
+        
+        if age_days < 0:
+            status = "Unknown"
+            product_type = "Unknown"
+        else:
+            if age_days < 90:
+                product_type = "Perdana (Babycare)"
+                status = "Active"
+            else:
+                product_type = "Isi Ulang (Non-Babycare)"
+                status = "Active"
+                
+        return JSONResponse(content={
+            "status": "success",
+            "data": {
+                "phone_number": req.phone_number,
+                "provider": req.provider,
+                "age_in_days": age_days,
+                "product_type": product_type
+            }
+        })
+    except Exception as e:
+        logging.error(f"Check SIM age failed: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

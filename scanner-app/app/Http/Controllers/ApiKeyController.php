@@ -31,7 +31,7 @@ class ApiKeyController extends Controller
         ]);
 
         try {
-            $response = \Illuminate\Support\Facades\Http::timeout(10)->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/keys/check', [
+            $response = \Illuminate\Support\Facades\Http::timeout(30)->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/keys/check', [
                 'api_key' => $request->key
             ]);
 
@@ -47,8 +47,11 @@ class ApiKeyController extends Controller
             ]);
 
             return response()->json(['message' => 'API Key berhasil ditambahkan. Mode didukung: ' . count($result['supported_models'] ?? [])]);
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            $url = env('FASTAPI_URL', 'http://127.0.0.1:8001');
+            return response()->json(['message' => "Koneksi ke FastAPI ($url) terputus (Timeout). Silakan coba lagi."], 500);
         } catch (\Exception $e) {
-            return response()->json(['message' => 'Gagal terhubung ke layanan FastAPI untuk memvalidasi API Key.'], 500);
+            return response()->json(['message' => 'Terjadi kesalahan sistem: ' . $e->getMessage()], 500);
         }
     }
 

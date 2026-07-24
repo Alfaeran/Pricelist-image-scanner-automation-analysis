@@ -115,6 +115,37 @@ Jika Anda ingin menjalankan aplikasi secara lokal tanpa Docker, ikuti langkah-la
    
 ---
 
+## 3. Mode Hybrid (Disarankan untuk Pengguna Windows dengan Laragon/XAMPP)
+
+Mode ini sangat direkomendasikan jika Anda merasakan *lag* (karena overhead volume mount Docker di Windows).
+Kita menjalankan database, queue worker, dan FastAPI (Python) di dalam Docker, tetapi aplikasi Laravel (PHP) dijalankan langsung (*native*) di host Windows.
+
+### Langkah-langkah
+1. Ubah konfigurasi `docker-compose.yml` dengan menghapus/meng-comment bagian service `laravel`.
+2. Pastikan `scanner-app/.env` memiliki konfigurasi ini (seperti yang sudah diset):
+   ```ini
+   DB_CONNECTION=pgsql
+   DB_HOST=127.0.0.1
+   DB_PORT=5433
+   DB_DATABASE=scanner_db
+   DB_USERNAME=postgres
+   DB_PASSWORD=postgres
+   FASTAPI_URL=http://127.0.0.1:8081
+   ```
+3. Jalankan service latar belakang (DB, FastAPI, Worker) via Docker:
+   ```bash
+   cd pricelist-scanner-automation-dashboard
+   docker-compose up -d --build --remove-orphans
+   ```
+4. Jalankan Laravel secara lokal (melalui terminal atau Laragon Virtual Host):
+   ```bash
+   cd scanner-app
+   php artisan serve --port=8000
+   ```
+5. Akses aplikasi Anda di `http://localhost:8000` atau melalui nama virtual host Laragon (misal: `http://scanner-app.test`). Aplikasi akan berjalan sangat kencang dan tetap terhubung dengan *backend* di dalam Docker!
+
+---
+
 ## Kredensial Login Default
 
 Setelah Anda menjalankan seeder database (`php artisan migrate --seed` atau `php artisan db:seed`), Anda bisa login menggunakan akun admin default:

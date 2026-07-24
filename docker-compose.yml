@@ -14,26 +14,7 @@ services:
       - db_data:/var/lib/postgresql/data
     restart: unless-stopped
 
-  laravel:
-    build: 
-      context: ./scanner-app
-    container_name: scanner_laravel
-    ports:
-      - "8085:8080"
-    environment:
-      - DB_CONNECTION=pgsql
-      - DB_HOST=db
-      - DB_PORT=5432
-      - DB_DATABASE=scanner_db
-      - DB_USERNAME=postgres
-      - DB_PASSWORD=postgres
-      - FASTAPI_URL=http://fastapi:8081
-    volumes:
-      - ./scanner-app:/app
-    depends_on:
-      - db
-    restart: unless-stopped
-    command: php artisan serve --host=0.0.0.0 --port=8080
+
 
   queue_worker:
     build: 

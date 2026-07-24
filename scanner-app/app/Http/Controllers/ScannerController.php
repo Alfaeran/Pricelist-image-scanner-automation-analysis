@@ -25,11 +25,15 @@ class ScannerController extends Controller
             'pricelist_id' => 'nullable|exists:pricelists,id',
             'message' => 'nullable|string',
             'images' => 'nullable|array',
-            'images.*' => 'file|max:10240|mimes:jpeg,png,jpg,webp,pdf,zip',
+            'images.*' => 'file|max:102400|mimes:jpeg,png,jpg,webp,pdf,zip',
         ]);
 
         if (!$request->hasFile('images') && !$request->filled('message')) {
             return back()->withErrors(['error' => 'Pesan atau file harus diisi.']);
+        }
+
+        if (!\App\Models\ApiKey::where('is_active', true)->exists()) {
+            return back()->withErrors(['error' => 'API Key Gemini belum diatur atau tidak valid. Silakan masukkan API Key terlebih dahulu di sebelah kiri.']);
         }
 
         $files = $request->file('images') ?? [];
@@ -37,8 +41,12 @@ class ScannerController extends Controller
         $originalNames = [];
 
         foreach ($files as $file) {
-            $originalNames[] = $file->getClientOriginalName();
-            $paths[] = $file->storeAs('pricelists', uniqid() . '_' . $file->getClientOriginalName());
+            $name = $file->getClientOriginalName();
+            if (Pricelist::where('filename', 'LIKE', '%' . $name . '%')->exists()) {
+                return back()->withErrors(['error' => "File '{$name}' sudah pernah diunggah (Terdeteksi duplikat). Harap ubah nama file jika ini adalah dataset baru."]);
+            }
+            $originalNames[] = $name;
+            $paths[] = $file->storeAs('pricelists', uniqid() . '_' . $name, 'public');
         }
 
         // 1. Get or Create Pricelist (Session)
@@ -66,7 +74,7 @@ class ScannerController extends Controller
         // 3. Dispatch Background Job if there are images
         if (count($paths) > 0) {
             $isAppend = $request->boolean('is_append', false);
-            ProcessPricelistJob::dispatch($pricelist, $paths, $isAppend);
+            ProcessPricelistJob::dispatch($pricelist->id, $paths, $isAppend);
         } else {
             // If just text, we redirect back. The frontend will hit ChatController separately or we can just let it be.
             // Actually, if it's just text, the frontend should just use ChatController directly to get the AI response synchronously.
@@ -77,11 +85,10 @@ class ScannerController extends Controller
 
     public function destroy(Pricelist $pricelist)
     {
-        // Delete attachments from storage
         foreach ($pricelist->chatMessages as $msg) {
             if ($msg->attachments) {
                 foreach ($msg->attachments as $path) {
-                    \Illuminate\Support\Facades\Storage::delete($path);
+                    \Illuminate\Support\Facades\Storage::disk('public')->delete($path);
                 }
             }
         }
@@ -139,6 +146,55 @@ class ScannerController extends Controller
             Log::error('Excel export error: ' . $e->getMessage());
             return back()->withErrors(['error' => 'Terjadi kesalahan: ' . $e->getMessage()]);
         }
+    }
+
+    public function exportCsv(Pricelist $pricelist)
+    {
+        if ($pricelist->status !== 'processed') {
+            return back()->withErrors(['error' => 'Data belum selesai diproses. Status saat ini: ' . $pricelist->status]);
+        }
+
+        $packages = $pricelist->packages;
+
+        if (!$packages || $packages->isEmpty()) {
+            return back()->withErrors(['error' => 'Tidak ada data paket untuk diekspor.']);
+        }
+
+        $filename = "Rekap_Harga_" . $pricelist->id . ".csv";
+
+        $headers = [
+            "Content-type"        => "text/csv",
+            "Content-Disposition" => "attachment; filename=$filename",
+            "Pragma"              => "no-cache",
+            "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
+            "Expires"             => "0"
+        ];
+
+        $columns = ['Provider', 'Package Name', 'Price', 'GB', 'Days', 'Price/GB', 'Category', 'Product Type'];
+
+        $callback = function() use($packages, $columns) {
+            $file = fopen('php://output', 'w');
+            fputcsv($file, $columns);
+
+            foreach ($packages as $pkg) {
+                $price_per_gb = $pkg->gb > 0 ? ceil($pkg->price / $pkg->gb) : 0;
+                $row = [
+                    $pkg->provider,
+                    $pkg->package_name ?? '',
+                    $pkg->price,
+                    $pkg->gb,
+                    $pkg->days,
+                    $price_per_gb,
+                    $pkg->category,
+                    $pkg->product_type ?? ''
+                ];
+                fputcsv($file, $row);
+            }
+
+            fclose($file);
+        };
+
+        return response()->stream($callback, 200, $headers);
     }
 
     public function insights(Pricelist $pricelist)
@@ -200,7 +256,7 @@ class ScannerController extends Controller
             'error_message' => null
         ]);
 
-        ProcessPricelistJob::dispatch($pricelist, $firstMessage->attachments);
+        ProcessPricelistJob::dispatch($pricelist->id, $firstMessage->attachments);
 
         return redirect()->back();
     }
@@ -258,6 +314,7 @@ class ScannerController extends Controller
         $request->validate([
             'packages' => 'required|array',
             'packages.*.provider' => 'required|string',
+            'packages.*.package_name' => 'nullable|string',
             'packages.*.price' => 'required|numeric',
             'packages.*.gb' => 'required|numeric',
             'packages.*.days' => 'required|integer',
@@ -280,6 +337,7 @@ class ScannerController extends Controller
                 \App\Models\ExtractedPackage::create([
                     'pricelist_id' => $pricelist->id,
                     'provider' => $pkg['provider'],
+                    'package_name' => $pkg['package_name'] ?? null,
                     'price' => $price,
                     'gb' => $gb,
                     'days' => $days,

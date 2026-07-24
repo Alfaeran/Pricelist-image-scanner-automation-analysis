@@ -97,18 +97,7 @@ class ChatController extends Controller
         }
         $modelsString = implode(',', $finalModels);
 
-        // Prepare context data
-        $payload = array_map(function($p) {
-            return [
-                'provider' => $p['provider'],
-                'category' => $p['category'],
-                'type' => $p['type'],
-                'gb' => $p['gb'],
-                'days' => $p['days'],
-                'price' => $p['price'],
-                'yield' => $p['yield'],
-            ];
-        }, $packages->toArray());
+        // Context payload is already prepared above
 
         // Forward to FastAPI
         try {
@@ -142,5 +131,15 @@ class ChatController extends Controller
             Log::error("Chat API Error: " . $e->getMessage());
             return response()->json(['error' => 'Terjadi kesalahan koneksi ke AI server.'], 500);
         }
+    }
+
+    public function destroyChart(Pricelist $pricelist, ChatMessage $chatMessage)
+    {
+        if ($chatMessage->pricelist_id !== $pricelist->id) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        $chatMessage->update(['chart_config' => null]);
+        return response()->json(['message' => 'Chart berhasil dihapus']);
     }
 }
