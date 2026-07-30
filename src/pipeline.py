@@ -31,14 +31,18 @@ PROVIDER_CODES = ["IM3", "3ID", "TSEL", "XL", "AXIS", "SF", "BYU"]
 
 PROVIDER_MAPPING = {
     "INDOSAT": "IM3",
-    "THREE": "3ID",
-    "TELKOMSEL": "TSEL",
-    "SMARTFREN": "SF",
+    "IM3": "IM3",
+    "THREE": "3",
+    "3ID": "3",
+    "3": "3",
+    "TELKOMSEL": "TELKOMSEL",
+    "TSEL": "TELKOMSEL",
+    "SMARTFREN": "SMARTFREN",
+    "SF": "SMARTFREN",
     "XL": "XL",
     "AXIS": "AXIS",
-    "3": "3ID",
-    "BY.U": "BYU",
-    "BYU": "BYU",
+    "BY.U": "BY.U",
+    "BYU": "BY.U",
 }
 
 CATEGORIES_ORDER = [
@@ -73,7 +77,7 @@ ATURAN:
 - Provider harus salah satu dari: "TSEL", "IM3", "3ID", "XL", "AXIS", "SF", "BYU"
 - Konversi harga: K = ribuan (37K -> 37000). Abaikan "Rp", titik, spasi.
 - `package_name`: Ambil nama paket yang biasanya ada di atas banner atau di samping logo brand (misal: "Smartfren Unlimited", "Freedom Internet"). Jika tidak ada, kosongkan string "".
-- PERKALIAN GB HANYA UNTUK PAKET UNLIMITED: Jika paket secara tertulis menyebutkan "Unlimited" dan formatnya GB/hari (misal 2GB/hari selama 28 hari), barulah kalikan GB dengan hari (menjadi 56GB). Jika bukan paket unlimited (hanya paket biasa misal 10GB 28 hari), JANGAN DIKALIKAN. Tulis saja 10GB.
+- UNTUK PAKET UNLIMITED (FUP per hari): Tuliskan kuota harian di kolom `gb` (misal 2GB/hari, tulis gb: 2.0). JANGAN dikalikan dengan jumlah hari, karena sistem akan menghitungnya secara otomatis. Jika paket biasa, tulis total GB-nya.
 - KOREKSI POLA (PRIOR KNOWLEDGE): 
   - SMARTFREN: Sering terjadi kesalahan baca. Smartfren 44K/45K biasanya 10GB (bukan 280GB). 62K biasanya 24GB. 81K biasanya 40GB. 130K biasanya 100GB.
   - IM3 / INDOSAT: Perhatikan baik-baik baris harga dan GB agar tidak tertukar/offset. Harga 38K=7GB, 46K=9GB, 51K=16GB, 61K=24GB, 68K/71K=26GB/30GB, 81K=40GB, 103K=65GB. Pastikan membaca dalam baris yang sama.
@@ -246,7 +250,7 @@ def _parse_gemini_response(raw_text: str) -> list[dict]:
 
 
 def extract_packages_gemini(
-    image_data_list: list[tuple[bytes, str]],
+    image_data_list: list[tuple[bytes, str, str]],
     api_keys: list[str],
     models: list[str] = [MODEL_NAME],
     on_status: callable | None = None,
@@ -256,8 +260,8 @@ def extract_packages_gemini(
 
     Parameters
     ----------
-    image_data_list : list[tuple[bytes, str]]
-        List of tuples containing (preprocessed_image_bytes, metadata_text).
+    image_data_list : list[tuple[bytes, str, str]]
+        List of tuples containing (preprocessed_image_bytes, metadata_text, filename).
     api_keys : list[str]
         List of Gemini API keys for rotation.
     key_index : int
@@ -284,7 +288,7 @@ def extract_packages_gemini(
     current_key_idx = 0
     all_extracted_data = []
 
-    for idx, (img_bytes, metadata_text) in enumerate(image_data_list):
+    for idx, (img_bytes, metadata_text, filename) in enumerate(image_data_list):
         if on_status:
             on_status(f"Mengekstrak data dari gambar ({idx + 1}/{len(image_data_list)})...")
             
@@ -325,6 +329,8 @@ def extract_packages_gemini(
                 )
 
                 data = _parse_gemini_response(response.text)
+                for d in data:
+                    d["image_filename"] = filename
                 all_extracted_data.extend(data)
                 success = True
                 break # Move to next image
@@ -358,11 +364,16 @@ def extract_packages_gemini(
 # 4. Post-Processing (from notebook cells 280-432)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def compute_yield(price: float, gb: float) -> int:
-    """Compute yield = ceil(price / gb). Returns 0 if gb is zero or inf."""
+def compute_yield(price: float, gb: float, days: int, package_name: str) -> int:
+    """Compute yield. For unlimited: yield = ceil(price / (gb * days)). Otherwise: yield = ceil(price / gb)."""
     if gb <= 0:
         return 0
-    val = price / gb
+    
+    if "unlimited" in str(package_name).lower() and days > 0:
+        val = price / (gb * days)
+    else:
+        val = price / gb
+        
     if val == np.inf or np.isnan(val):
         return 0
     return math.ceil(val)
@@ -427,7 +438,7 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     # Compute yield and category
     df["yield_val"] = df.apply(
-        lambda row: compute_yield(row["price"], row["gb"]), axis=1
+        lambda row: compute_yield(row["price"], row["gb"], row["days"], str(row.get("package_name", ""))), axis=1
     )
     df["category"] = df.apply(
         lambda row: categorize(row["days"], row["price"]), axis=1

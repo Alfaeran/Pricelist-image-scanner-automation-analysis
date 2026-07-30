@@ -21,7 +21,8 @@ async def extract_data(
     api_keys: str = Form(...),
     model: str = Form("gemini-2.0-flash"),
     prompt: str = Form(None),
-    pricelist_id: int = Form(None)
+    pricelist_id: int = Form(None),
+    webhook_url: str = Form(None)
 ):
     """
     Endpoint for Laravel to send images and API key to.
@@ -38,11 +39,11 @@ async def extract_data(
                 for name, img_bytes in extracted:
                     metadata_str = extract_metadata(name, img_bytes)
                     processed_bytes = preprocess_image(img_bytes)
-                    processed_images.append((processed_bytes, metadata_str))
+                    processed_images.append((processed_bytes, metadata_str, name))
             else:
                 metadata_str = extract_metadata(file.filename, file_bytes)
                 processed_bytes = preprocess_image(file_bytes)
-                processed_images.append((processed_bytes, metadata_str))
+                processed_images.append((processed_bytes, metadata_str, file.filename))
                 
         if not processed_images:
             raise ValueError("Tidak ada gambar valid yang ditemukan di dalam file upload.")
@@ -57,10 +58,19 @@ async def extract_data(
 
         import requests
         def status_callback(msg: str):
-            if pricelist_id is not None:
+            if webhook_url:
                 try:
                     requests.post(
-                        f"http://127.0.0.1:8002/api/scanner/{pricelist_id}/status",
+                        webhook_url,
+                        json={"status": msg},
+                        timeout=3
+                    )
+                except Exception as e:
+                    logging.warning(f"Failed to push status to webhook: {e}")
+            elif pricelist_id is not None:
+                try:
+                    requests.post(
+                        f"http://127.0.0.1:8000/api/scanner/{pricelist_id}/status",
                         json={"status": msg},
                         timeout=3
                     )
@@ -92,6 +102,7 @@ class PackageItem(BaseModel):
     category: str
     image_timestamp: str = None
     image_location: str = None
+    image_filename: str = None
 
 class ExportRequest(BaseModel):
     packages: List[PackageItem]

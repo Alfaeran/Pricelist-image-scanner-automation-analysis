@@ -21,7 +21,8 @@ class ExtractedPackage extends Model
         'category',
         'product_type',
         'image_timestamp',
-        'image_location'
+        'image_location',
+        'image_filename',
     ];
 
     public function pricelist(): BelongsTo

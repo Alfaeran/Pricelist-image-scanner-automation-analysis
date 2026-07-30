@@ -23,7 +23,8 @@ class ProcessPricelistJob implements ShouldQueue
     public function __construct(
         public int $pricelistId,
         public array $filePaths,
-        public bool $isAppend = false
+        public bool $isAppend = false,
+        public ?string $manualTimestamp = null
     ) {
     }
 
@@ -96,35 +97,44 @@ class ProcessPricelistJob implements ShouldQueue
 
             try {
                 $request = Http::timeout(300);
-                $hasValidFile = false;
+                $hasValidImage = false;
+                $hasValidData = false;
 
                 foreach ($this->filePaths as $path) {
                     $fullPath = Storage::disk('public')->path($path);
                     if (file_exists($fullPath)) {
-                        $stream = fopen($fullPath, 'r');
-                        $request = $request->attach('files', $stream, basename($path));
-                        $hasValidFile = true;
+                        $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
+                        if (in_array($ext, ['csv', 'txt', 'xlsx', 'xls'])) {
+                            $this->processDataFile($fullPath, $pricelist);
+                            $hasValidData = true;
+                        } else {
+                            $stream = fopen($fullPath, 'r');
+                            $request = $request->attach('files', $stream, basename($path));
+                            $hasValidImage = true;
+                        }
                     }
                 }
 
-                if (!$hasValidFile) {
-                    $this->failPermanently("Tidak ada file gambar yang valid ditemukan di storage.");
+                if (!$hasValidImage && !$hasValidData) {
+                    $this->failPermanently("Tidak ada file gambar atau data yang valid ditemukan di storage.");
                     return;
                 }
-
                 // Check cancellation
                 if ($pricelist->fresh()->status === 'cancelled')
                     return;
 
-                $latestMsg = $pricelist->chatMessages()->whereNotNull('attachments')->latest()->first();
-                $prompt = $latestMsg ? $latestMsg->content : null;
+                if ($hasValidImage) {
+                    $latestMsg = $pricelist->chatMessages()->whereNotNull('attachments')->latest()->first();
+                    $prompt = $latestMsg ? $latestMsg->content : null;
 
-                $response = $request->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/extract', [
-                    'api_keys' => $apiKeysString,
-                    'model' => $modelsString,
-                    'prompt' => $prompt,
-                    'pricelist_id' => $pricelist->id
-                ]);
+                    $response = $request->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/extract', [
+                        'api_keys' => $apiKeysString,
+                        'model' => $modelsString,
+                        'prompt' => $prompt,
+                        'pricelist_id' => $pricelist->id,
+                        'webhook_url' => route('scanner.status.update', $pricelist->id)
+                    ]);
+                }
             } catch (\Illuminate\Http\Client\ConnectionException $e) {
                 throw new \Exception("Tidak bisa terhubung ke FastAPI microservice. Pastikan container berjalan. Error: " . $e->getMessage());
             }
@@ -133,128 +143,157 @@ class ProcessPricelistJob implements ShouldQueue
             $metrics['extract_time'] = round($extractEnd - $extractStart, 2);
             Log::info("Extraction took {$metrics['extract_time']}s for {$pricelist->filename}");
 
-            if ($response->successful()) {
-                $data = $response->json('data');
+            if ($hasValidImage) {
+                if ($response->successful()) {
+                    $data = $response->json('data');
 
-                if (is_array($data) && count($data) > 0) {
-                    // Check cancellation
-                    if ($pricelist->fresh()->status === 'cancelled')
-                        return;
+                    if (is_array($data) && count($data) > 0) {
+                        // Check cancellation
+                        if ($pricelist->fresh()->status === 'cancelled')
+                            return;
 
-                    DB::transaction(function () use ($data, $pricelist) {
-                        if (!$this->isAppend) {
-                            $pricelist->packages()->delete();
-                        }
-                        foreach ($data as $pkg) {
-                            if (!isset($pkg['price'], $pkg['gb'], $pkg['days']))
-                                continue;
+                        DB::transaction(function () use ($data, $pricelist) {
+                            if (!$this->isAppend) {
+                                $pricelist->packages()->delete();
+                            }
+                            foreach ($data as $pkg) {
+                                if (!isset($pkg['price'], $pkg['gb'], $pkg['days']))
+                                    continue;
 
-                            ExtractedPackage::create([
-                                'pricelist_id' => $pricelist->id,
-                                'provider' => $pkg['provider'] ?? 'UNKNOWN',
-                                'price' => (int) $pkg['price'],
-                                'gb' => (float) $pkg['gb'],
-                                'days' => (int) $pkg['days'],
-                                'yield_val' => $pkg['gb'] > 0 ? ceil($pkg['price'] / $pkg['gb']) : 0,
-                                'category' => $this->categorize((int) $pkg['days'], (int) $pkg['price']),
-                                'product_type' => $pkg['product_type'] ?? null,
-                                'image_timestamp' => $pkg['image_timestamp'] ?? null,
-                                'image_location' => $pkg['image_location'] ?? null,
+                                $price = (int) $pkg['price'];
+                                $gb = (float) $pkg['gb'];
+                                $days = (int) $pkg['days'];
+                                
+                                $yield_val = 0;
+                                if (isset($pkg['yield_val'])) {
+                                    $yield_val = $pkg['yield_val'];
+                                } else {
+                                    if (stripos($pkg['package_name'] ?? '', 'unlimited') !== false && $days > 0) {
+                                        $yield_val = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
+                                    } else {
+                                        $yield_val = $gb > 0 ? ceil($price / $gb) : 0;
+                                    }
+                                }
+
+                                ExtractedPackage::create([
+                                    'pricelist_id' => $pricelist->id,
+                                    'provider' => $pkg['provider'] ?? 'UNKNOWN',
+                                    'package_name' => $pkg['package_name'] ?? null,
+                                    'price' => $price,
+                                    'gb' => $gb,
+                                    'days' => $days,
+                                    'yield_val' => $yield_val,
+                                    'category' => $this->categorize((int) $pkg['days'], (int) $pkg['price']),
+                                    'product_type' => $pkg['product_type'] ?? null,
+                                    'image_timestamp' => $this->manualTimestamp ?? ($pkg['image_timestamp'] ?? null),
+                                    'image_location' => $pkg['image_location'] ?? null,
+                                    'image_filename' => $pkg['image_filename'] ?? null,
+                                ]);
+                            }
+                        });
+
+                        // Check cancellation
+                        if ($pricelist->fresh()->status === 'cancelled')
+                            return;
+
+                        $pricelist->update(['status' => 'Menyusun insight & benchmarking...']);
+
+                        try {
+                            $payload = $pricelist->packages()->get()->map(function ($p) {
+                                return [
+                                    'provider' => $p->provider,
+                                    'package_name' => $p->package_name,
+                                    'price' => (int) $p->price,
+                                    'gb' => (float) $p->gb,
+                                    'days' => (int) $p->days,
+                                    'yield_val' => (float) $p->yield_val,
+                                    'category' => $p->category,
+                                    'image_timestamp' => $p->image_timestamp,
+                                    'image_location' => $p->image_location,
+                                    'image_filename' => $p->image_filename,
+                                ];
+                            })->toArray();
+
+                            $chatStart = microtime(true);
+                            $insightResponse = Http::timeout(60)->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/chat', [
+                                'message' => 'Buatkan benchmarking antar brand dan insight summaries dari data hasil scan ini.',
+                                'packages' => $payload,
+                                'api_keys' => $apiKeysString,
+                                'model' => $modelsString
                             ]);
+                            $chatEnd = microtime(true);
+                            $metrics['chat_time'] = round($chatEnd - $chatStart, 2);
+
+                            if ($insightResponse->successful()) {
+                                $chatData = $insightResponse->json('data');
+                                $pricelist->chatMessages()->create([
+                                    'role' => 'assistant',
+                                    'content' => $chatData['text'],
+                                    'chart_config' => $chatData['chart_config'] ?? null
+                                ]);
+                            }
+                        } catch (\Throwable $e) {
+                            Log::error("Auto-chat failed: " . $e->getMessage());
                         }
-                    });
 
-                    // Check cancellation
-                    if ($pricelist->fresh()->status === 'cancelled')
-                        return;
+                        // Check cancellation
+                        if ($pricelist->fresh()->status === 'cancelled')
+                            return;
 
-                    $pricelist->update(['status' => 'Menyusun insight & benchmarking...']);
+                        $metrics['total_time'] = round(microtime(true) - $jobStartTime, 2);
 
-                    try {
-                        $payload = $pricelist->packages()->get()->map(function ($p) {
-                            return [
-                                'provider' => $p->provider,
-                                'price' => (int) $p->price,
-                                'gb' => (float) $p->gb,
-                                'days' => (int) $p->days,
-                                'yield_val' => (float) $p->yield_val,
-                                'category' => $p->category,
-                                'image_timestamp' => $p->image_timestamp,
-                                'image_location' => $p->image_location,
-                            ];
-                        })->toArray();
-
-                        $chatStart = microtime(true);
-                        $insightResponse = Http::timeout(60)->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/chat', [
-                            'message' => 'Buatkan benchmarking antar brand dan insight summaries dari data hasil scan ini.',
-                            'packages' => $payload,
-                            'api_keys' => $apiKeysString,
-                            'model' => $modelsString
+                        $pricelist->update([
+                            'status' => 'processed',
+                            'performance_metrics' => $metrics
                         ]);
-                        $chatEnd = microtime(true);
-                        $metrics['chat_time'] = round($chatEnd - $chatStart, 2);
-
-                        if ($insightResponse->successful()) {
-                            $chatData = $insightResponse->json('data');
-                            $pricelist->chatMessages()->create([
-                                'role' => 'assistant',
-                                'content' => $chatData['text'],
-                                'chart_config' => $chatData['chart_config'] ?? null
-                            ]);
-                        }
-                    } catch (\Throwable $e) {
-                        Log::error("Auto-chat failed: " . $e->getMessage());
+                        // Storage::delete($this->filePaths); // Keep files for viewing in UI
+                        return;
                     }
 
-                    // Check cancellation
-                    if ($pricelist->fresh()->status === 'cancelled')
-                        return;
-
-                    $metrics['total_time'] = round(microtime(true) - $jobStartTime, 2);
-
-                    $pricelist->update([
-                        'status' => 'processed',
-                        'performance_metrics' => $metrics
-                    ]);
-                    // Storage::delete($this->filePaths); // Keep files for viewing in UI
+                    $pricelist->update(['status' => 'error']);
+                    $this->failPermanently("Gemini tidak bisa mengekstrak data dari gambar ini (respons kosong). Pastikan gambar berisi tabel harga.");
                     return;
                 }
 
+                // 5. Handle Errors
+                $errorMsg = $response->body();
+                $statusCode = $response->status();
+
                 $pricelist->update(['status' => 'error']);
-                $this->failPermanently("Gemini tidak bisa mengekstrak data dari gambar ini (respons kosong). Pastikan gambar berisi tabel harga.");
+
+                $parsedError = json_decode($errorMsg, true);
+                $detail = $parsedError['detail'] ?? $parsedError['message'] ?? $errorMsg;
+                if (is_array($detail)) {
+                    $detail = json_encode($detail);
+                }
+
+                $userFriendlyMessage = "Gagal memproses gambar. ";
+                if ($statusCode === 422) {
+                    $userFriendlyMessage .= "Konfigurasi API tidak valid atau ada parameter yang kurang.";
+                } elseif ($statusCode === 500 || $statusCode === 503) {
+                    if (str_contains(strtolower($detail), 'habis')) {
+                        $userFriendlyMessage = "Seluruh kuota harian dari API Key Anda telah habis. Silakan tunggu beberapa saat atau tambahkan API Key baru di pengaturan.";
+                    } elseif (str_contains(strtolower($detail), 'format tidak didukung')) {
+                        $userFriendlyMessage = "Format gambar tidak didukung atau rusak.";
+                    } else {
+                        $userFriendlyMessage .= "Server AI sedang sibuk atau mengalami kendala internal.";
+                    }
+                } else {
+                    $userFriendlyMessage .= "Kode HTTP {$statusCode}.";
+                }
+
+                Log::error("FastAPI Error ($statusCode): $errorMsg");
+                $this->failPermanently($userFriendlyMessage);
+                return;
+            } else {
+                // $hasValidImage is false, but we have valid data.
+                $metrics['total_time'] = round(microtime(true) - $jobStartTime, 2);
+                $pricelist->update([
+                    'status' => 'processed',
+                    'performance_metrics' => $metrics
+                ]);
                 return;
             }
-
-            // 5. Handle Errors
-            $errorMsg = $response->body();
-            $statusCode = $response->status();
-
-            $pricelist->update(['status' => 'error']);
-
-            $parsedError = json_decode($errorMsg, true);
-            $detail = $parsedError['detail'] ?? $parsedError['message'] ?? $errorMsg;
-            if (is_array($detail)) {
-                $detail = json_encode($detail);
-            }
-
-            $userFriendlyMessage = "Gagal memproses gambar. ";
-            if ($statusCode === 422) {
-                $userFriendlyMessage .= "Konfigurasi API tidak valid atau ada parameter yang kurang.";
-            } elseif ($statusCode === 500 || $statusCode === 503) {
-                if (str_contains(strtolower($detail), 'habis')) {
-                    $userFriendlyMessage = "Seluruh kuota harian dari API Key Anda telah habis. Silakan tunggu beberapa saat atau tambahkan API Key baru di pengaturan.";
-                } elseif (str_contains(strtolower($detail), 'format tidak didukung')) {
-                    $userFriendlyMessage = "Format gambar tidak didukung atau rusak.";
-                } else {
-                    $userFriendlyMessage .= "Server AI sedang sibuk atau mengalami kendala internal.";
-                }
-            } else {
-                $userFriendlyMessage .= "Kode HTTP {$statusCode}.";
-            }
-
-            Log::error("FastAPI Error ($statusCode): $errorMsg");
-            $this->failPermanently($userFriendlyMessage);
-
         } catch (\Exception $e) {
             Log::error("Scanner Job Error: " . $e->getMessage());
             if ($this->attempts() >= $this->tries) {
@@ -305,6 +344,58 @@ class ProcessPricelistJob implements ShouldQueue
         if ($price > 100000)
             return 'Bulanan (Premium/Jumbo)';
         return 'Bulanan (Standar)';
+    }
+
+    private function processDataFile(string $fullPath, Pricelist $pricelist): void
+    {
+        $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
+        $csvData = [];
+        
+        if ($ext === 'xlsx' || $ext === 'xls') {
+            if ($xlsx = \Shuchkin\SimpleXLSX::parse($fullPath)) {
+                foreach ($xlsx->rows() as $row) {
+                    $csvData[] = $row;
+                }
+            }
+        } else {
+            if (($handle = fopen($fullPath, "r")) !== FALSE) {
+                while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
+                    $csvData[] = $data;
+                }
+                fclose($handle);
+            }
+        }
+
+        foreach ($csvData as $i => $row) {
+            if ($i < 4) continue; // Skip headers
+            if (count($row) < 6) continue;
+            
+            $provider = strtoupper(trim($row[1]));
+            if (!$provider) continue;
+            
+            if ($provider == 'SF') $provider = 'SMARTFREN';
+            elseif ($provider == 'TSEL') $provider = 'TELKOMSEL';
+            elseif ($provider == '3ID') $provider = '3';
+            elseif ($provider == 'BYU') $provider = 'BY.U';
+            
+            $price = (int) preg_replace('/[^\d]/', '', $row[3] ?? '');
+            $gbStr = str_replace(',', '.', $row[4] ?? '');
+            $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
+            $days = (int) preg_replace('/[^\d]/', '', $row[5] ?? '');
+            
+            \App\Models\ExtractedPackage::create([
+                'pricelist_id' => $pricelist->id,
+                'provider' => $provider,
+                'package_name' => "Paket " . $provider,
+                'price' => $price,
+                'gb' => $gb,
+                'days' => $days,
+                'yield_val' => $gb > 0 ? ceil($price / $gb) : 0,
+                'category' => $this->categorize($days, $price),
+                'product_type' => 'Data',
+                'image_timestamp' => $this->manualTimestamp,
+            ]);
+        }
     }
 
     public function failed(\Throwable $exception): void

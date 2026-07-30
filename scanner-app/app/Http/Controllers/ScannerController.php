@@ -25,7 +25,9 @@ class ScannerController extends Controller
             'pricelist_id' => 'nullable|exists:pricelists,id',
             'message' => 'nullable|string',
             'images' => 'nullable|array',
-            'images.*' => 'file|max:102400|mimes:jpeg,png,jpg,webp,pdf,zip',
+            'images.*' => 'file|max:102400|mimes:jpeg,png,jpg,webp,pdf,zip,csv,txt,xlsx,xls',
+            'is_append' => 'boolean',
+            'manual_timestamp' => 'nullable|date'
         ]);
 
         if (!$request->hasFile('images') && !$request->filled('message')) {
@@ -41,10 +43,24 @@ class ScannerController extends Controller
         $originalNames = [];
 
         foreach ($files as $file) {
-            $name = $file->getClientOriginalName();
-            if (Pricelist::where('filename', 'LIKE', '%' . $name . '%')->exists()) {
-                return back()->withErrors(['error' => "File '{$name}' sudah pernah diunggah (Terdeteksi duplikat). Harap ubah nama file jika ini adalah dataset baru."]);
+            if (!$file->isValid()) {
+                \Log::error('Upload failed with error code: ' . $file->getError() . ' - Message: ' . $file->getErrorMessage());
+                return back()->withErrors(['error' => 'Gagal mengupload file: ' . $file->getErrorMessage()]);
             }
+
+            $name = $file->getClientOriginalName();
+            $originalNameInfo = pathinfo($name);
+            $baseName = $originalNameInfo['filename'];
+            $extension = isset($originalNameInfo['extension']) ? '.' . $originalNameInfo['extension'] : '';
+            
+            $counter = 1;
+            $searchName = $name;
+            while (Pricelist::where('filename', 'LIKE', '%' . $searchName . '%')->exists()) {
+                $searchName = $baseName . '(' . $counter . ')' . $extension;
+                $counter++;
+            }
+            $name = $searchName;
+
             $originalNames[] = $name;
             $paths[] = $file->storeAs('pricelists', uniqid() . '_' . $name, 'public');
         }
@@ -71,10 +87,10 @@ class ScannerController extends Controller
             'attachments' => count($paths) > 0 ? $paths : null,
         ]);
 
-        // 3. Dispatch Background Job if there are images
         if (count($paths) > 0) {
             $isAppend = $request->boolean('is_append', false);
-            ProcessPricelistJob::dispatch($pricelist->id, $paths, $isAppend);
+            $manualTimestamp = $request->input('manual_timestamp');
+            ProcessPricelistJob::dispatch($pricelist->id, $paths, $isAppend, $manualTimestamp);
         } else {
             // If just text, we redirect back. The frontend will hit ChatController separately or we can just let it be.
             // Actually, if it's just text, the frontend should just use ChatController directly to get the AI response synchronously.
@@ -197,6 +213,55 @@ class ScannerController extends Controller
         return response()->stream($callback, 200, $headers);
     }
 
+    public function exportTxt(Pricelist $pricelist)
+    {
+        if ($pricelist->status !== 'processed') {
+            return back()->withErrors(['error' => 'Data belum selesai diproses. Status saat ini: ' . $pricelist->status]);
+        }
+
+        $packages = $pricelist->packages;
+
+        if (!$packages || $packages->isEmpty()) {
+            return back()->withErrors(['error' => 'Tidak ada data paket untuk diekspor.']);
+        }
+
+        $filename = "Rekap_Harga_" . $pricelist->id . ".txt";
+
+        $headers = [
+            "Content-type"        => "text/plain",
+            "Content-Disposition" => "attachment; filename=$filename",
+            "Pragma"              => "no-cache",
+            "Cache-Control"       => "must-revalidate, post-check=0, pre-check=0",
+            "Expires"             => "0"
+        ];
+
+        $columns = ['Provider', 'Package Name', 'Price', 'GB', 'Days', 'Price/GB', 'Category', 'Product Type'];
+
+        $callback = function() use($packages, $columns) {
+            $file = fopen('php://output', 'w');
+            fputcsv($file, $columns, "\t");
+
+            foreach ($packages as $pkg) {
+                $price_per_gb = $pkg->gb > 0 ? ceil($pkg->price / $pkg->gb) : 0;
+                $row = [
+                    $pkg->provider,
+                    $pkg->package_name ?? '',
+                    $pkg->price,
+                    $pkg->gb,
+                    $pkg->days,
+                    $price_per_gb,
+                    $pkg->category,
+                    $pkg->product_type ?? ''
+                ];
+                fputcsv($file, $row, "\t");
+            }
+
+            fclose($file);
+        };
+
+        return response()->stream($callback, 200, $headers);
+    }
+
     public function insights(Pricelist $pricelist)
     {
         if ($pricelist->status !== 'processed') {
@@ -212,6 +277,7 @@ class ScannerController extends Controller
         $payload = $packages->map(function ($pkg) {
             return [
                 'provider' => $pkg->provider,
+                'package_name' => $pkg->package_name,
                 'price' => (int) $pkg->price,
                 'gb' => (float) $pkg->gb,
                 'days' => (int) $pkg->days,
@@ -327,7 +393,11 @@ class ScannerController extends Controller
                 $gb = (float) $pkg['gb'];
                 $days = (int) $pkg['days'];
                 
-                $yield = $gb > 0 ? ceil($price / $gb) : 0;
+                if (stripos($pkg['package_name'] ?? '', 'unlimited') !== false && $days > 0) {
+                    $yield = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
+                } else {
+                    $yield = $gb > 0 ? ceil($price / $gb) : 0;
+                }
                 
                 $category = 'Bulanan (Standar)';
                 if ($days <= 7) $category = 'Harian (Sachet)';
@@ -350,5 +420,344 @@ class ScannerController extends Controller
         });
 
         return back()->with('success', 'Data berhasil diperbarui berdasarkan validasi manual.');
+    }
+
+    public function updateSinglePackage(Request $request, \App\Models\ExtractedPackage $package)
+    {
+        $request->validate([
+            'provider' => 'required|string',
+            'package_name' => 'nullable|string',
+            'price' => 'required|numeric',
+            'gb' => 'required|numeric',
+            'days' => 'required|integer',
+            'image_timestamp' => 'nullable|string',
+        ]);
+
+        $price = (int) $request->price;
+        $gb = (float) $request->gb;
+        $days = (int) $request->days;
+        
+        if (stripos($request->package_name ?? '', 'unlimited') !== false && $days > 0) {
+            $yield = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
+        } else {
+            $yield = $gb > 0 ? ceil($price / $gb) : 0;
+        }
+        
+        $category = 'Bulanan (Standar)';
+        if ($days <= 7) $category = 'Harian (Sachet)';
+        elseif ($days <= 15) $category = 'Mingguan';
+        elseif ($price > 100000) $category = 'Bulanan (Premium/Jumbo)';
+
+        $package->update([
+            'provider' => $request->provider,
+            'package_name' => $request->package_name,
+            'price' => $price,
+            'gb' => $gb,
+            'days' => $days,
+            'yield_val' => $yield,
+            'category' => $category,
+            'image_timestamp' => $request->image_timestamp,
+        ]);
+
+        return response()->json(['success' => true, 'package' => $package]);
+    }
+
+    public function uploadData(Request $request)
+    {
+        $request->validate([
+            'data_file' => 'required|file|mimes:csv,txt,xlsx,xls|max:102400',
+            'manual_timestamp' => 'nullable|date'
+        ]);
+
+        $manualTimestamp = $request->input('manual_timestamp');
+        $file = $request->file('data_file');
+        
+        $csvData = [];
+        $ext = strtolower($file->getClientOriginalExtension());
+        
+        if ($ext === 'xlsx' || $ext === 'xls') {
+            if ($xlsx = \Shuchkin\SimpleXLSX::parse($file->getRealPath())) {
+                foreach ($xlsx->rows() as $row) {
+                    $csvData[] = $row;
+                }
+            } else {
+                return back()->withErrors(['error' => 'Gagal membaca file Excel: ' . \Shuchkin\SimpleXLSX::parseError()]);
+            }
+        } else {
+            if (($handle = fopen($file->getRealPath(), "r")) !== FALSE) {
+                while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
+                    $csvData[] = $data;
+                }
+                fclose($handle);
+            } else {
+                return back()->withErrors(['error' => 'Gagal membaca file CSV.']);
+            }
+        }
+        
+        $originalName = $file->getClientOriginalName();
+        
+        \Illuminate\Support\Facades\DB::transaction(function () use ($csvData, $originalName, $manualTimestamp) {
+            $pricelist = Pricelist::create([
+                'filename' => $originalName,
+                'status' => 'processed'
+            ]);
+            
+            $pricelist->chatMessages()->create([
+                'role' => 'user',
+                'content' => 'Upload data manual: ' . $originalName,
+                'attachments' => null,
+            ]);
+
+            foreach ($csvData as $i => $row) {
+                if ($i < 4) continue; // Skip headers
+                if (count($row) < 6) continue;
+                
+                $provider = strtoupper(trim($row[1]));
+                if (!$provider) continue;
+                
+                // Normalization exactly like compareCsv
+                if ($provider == 'SF') $provider = 'SMARTFREN';
+                elseif ($provider == 'TSEL') $provider = 'TELKOMSEL';
+                elseif ($provider == '3ID') $provider = '3';
+                elseif ($provider == 'BYU') $provider = 'BY.U';
+                
+                $price = (int) preg_replace('/[^\d]/', '', $row[3]);
+                
+                // Fix GB parsing (comma to dot)
+                $gbStr = str_replace(',', '.', $row[4]);
+                $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
+                
+                $days = (int) preg_replace('/[^\d]/', '', $row[5]);
+                
+                // Calculate category and yield
+                $yield = $gb > 0 ? ceil($price / $gb) : 0;
+                
+                $category = 'Bulanan (Standar)';
+                if ($days <= 7) $category = 'Harian (Sachet)';
+                elseif ($days <= 15) $category = 'Mingguan';
+                elseif ($price > 100000) $category = 'Bulanan (Premium/Jumbo)';
+
+                \App\Models\ExtractedPackage::create([
+                    'pricelist_id' => $pricelist->id,
+                    'provider' => $provider,
+                    'package_name' => "Paket " . $provider,
+                    'price' => $price,
+                    'gb' => $gb,
+                    'days' => $days,
+                    'yield_val' => $yield,
+                    'category' => $category,
+                    'product_type' => 'Data',
+                    'image_timestamp' => $manualTimestamp,
+                ]);
+            }
+        });
+
+        return redirect()->back()->with('success', 'Data berhasil diimpor.');
+    }
+
+    public function compareCsv(Request $request, Pricelist $pricelist)
+    {
+        $request->validate([
+            'csv_file' => 'required|file|mimes:csv,txt,xlsx,xls'
+        ]);
+
+        $file = $request->file('csv_file');
+        
+        $csvData = [];
+        $ext = strtolower($file->getClientOriginalExtension());
+        
+        if ($ext === 'xlsx' || $ext === 'xls') {
+            if ($xlsx = \Shuchkin\SimpleXLSX::parse($file->getRealPath())) {
+                foreach ($xlsx->rows() as $row) {
+                    $csvData[] = $row;
+                }
+            } else {
+                return response()->json(['success' => false, 'error' => \Shuchkin\SimpleXLSX::parseError()], 400);
+            }
+        } else {
+            if (($handle = fopen($file->getRealPath(), "r")) !== FALSE) {
+                while (($data = fgetcsv($handle, 1000, ",")) !== FALSE) {
+                    $csvData[] = $data;
+                }
+                fclose($handle);
+            }
+        }
+        
+        $csvPackages = [];
+        foreach ($csvData as $i => $row) {
+            if ($i < 4) continue; // Skip headers
+            if (count($row) < 6) continue;
+            
+            $provider = strtoupper(trim($row[1]));
+            if (!$provider) continue;
+            
+            if ($provider == 'SF') $provider = 'SMARTFREN';
+            elseif ($provider == 'TSEL') $provider = 'TELKOMSEL';
+            elseif ($provider == '3ID') $provider = '3';
+            elseif ($provider == 'BYU') $provider = 'BY.U';
+            
+            $price = (int) preg_replace('/[^\d]/', '', $row[3]);
+            $gbStr = str_replace(',', '.', $row[4]);
+            $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
+            $days = (int) preg_replace('/[^\d]/', '', $row[5]);
+            
+            $csvPackages[] = [
+                'provider' => $provider,
+                'price' => $price,
+                'gb' => $gb,
+                'days' => $days,
+            ];
+        }
+
+        $dbPackages = $pricelist->packages;
+        $results = [];
+        $csvUnmatched = $csvPackages;
+
+        foreach ($dbPackages as $dbPkg) {
+            $dbProvider = strtoupper(trim($dbPkg->provider));
+            if ($dbProvider == 'SF') $dbProvider = 'SMARTFREN';
+            elseif ($dbProvider == 'TSEL') $dbProvider = 'TELKOMSEL';
+            elseif ($dbProvider == '3ID') $dbProvider = '3';
+            elseif ($dbProvider == 'BYU') $dbProvider = 'BY.U';
+
+            $dbPrice = (int) $dbPkg->price;
+            $dbGb = (float) $dbPkg->gb;
+            $dbDays = (int) $dbPkg->days;
+
+            $foundMatch = false;
+            $matchType = 'not_found';
+            $matchedCsv = null;
+            
+            // 1. Exact Match
+            foreach ($csvUnmatched as $idx => $csvPkg) {
+                if ($dbProvider === $csvPkg['provider'] && 
+                    $dbPrice === $csvPkg['price'] && 
+                    $dbDays === (int)$csvPkg['days'] &&
+                    abs($dbGb - $csvPkg['gb']) < 0.1) {
+                    
+                    $matchType = 'matched';
+                    $matchedCsv = $csvPkg;
+                    unset($csvUnmatched[$idx]);
+                    $foundMatch = true;
+                    break;
+                }
+            }
+
+            // 2. Relaxed Match (Different Price, but same provider and GB)
+            if (!$foundMatch) {
+                foreach ($csvUnmatched as $idx => $csvPkg) {
+                    if ($dbProvider === $csvPkg['provider'] && 
+                        abs($dbGb - $csvPkg['gb']) < 0.1) {
+                        
+                        $matchType = 'price_mismatch';
+                        $matchedCsv = $csvPkg;
+                        unset($csvUnmatched[$idx]);
+                        $foundMatch = true;
+                        break;
+                    }
+                }
+            }
+
+            $results[$dbPkg->id] = [
+                'status' => $matchType,
+                'expected_price' => $matchedCsv ? $matchedCsv['price'] : null,
+                'csv_row' => $matchedCsv
+            ];
+        }
+
+        return response()->json([
+            'success' => true,
+            'results' => $results,
+            'unmatched_csv' => array_values($csvUnmatched),
+            'total_csv' => count($csvPackages),
+            'total_db' => count($dbPackages)
+        ]);
+    }
+
+    public function syncCsv(Request $request, Pricelist $pricelist)
+    {
+        $updates = $request->input('updates', []);
+        $newPackages = $request->input('new_packages', []);
+
+        // Process updates
+        foreach ($updates as $update) {
+            $pkg = \App\Models\ExtractedPackage::where('pricelist_id', $pricelist->id)
+                          ->where('id', $update['id'])
+                          ->first();
+            if ($pkg) {
+                $pkg->provider = $update['provider'];
+                $pkg->price = $update['price'];
+                $pkg->gb = $update['gb'];
+                $pkg->days = $update['days'];
+                
+                // Update category based on days and price
+                $pkg->category = 'Bulanan (Standar)';
+                if ($pkg->days <= 7) {
+                    $pkg->category = 'Harian (Sachet)';
+                } elseif ($pkg->days <= 15) {
+                    $pkg->category = 'Mingguan';
+                } elseif ($pkg->price > 100000) {
+                    $pkg->category = 'Bulanan (Premium/Jumbo)';
+                }
+                
+                // Recalculate yield
+                $price = (int)$pkg->price;
+                $gb = (float)$pkg->gb;
+                $days = (int)$pkg->days;
+                
+                if (stripos($pkg->package_name ?? '', 'unlimited') !== false && $days > 0) {
+                    $pkg->yield_val = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
+                } else {
+                    $pkg->yield_val = $gb > 0 ? ceil($price / $gb) : 0;
+                }
+
+                $pkg->save();
+            }
+        }
+
+        // Process new packages
+        foreach ($newPackages as $newPkg) {
+            $provider = $newPkg['provider'];
+            $price = (int)$newPkg['price'];
+            $gb = (float)$newPkg['gb'];
+            $days = (int)$newPkg['days'];
+
+            $category = 'Bulanan (Standar)';
+            if ($days <= 7) {
+                $category = 'Harian (Sachet)';
+            } elseif ($days <= 15) {
+                $category = 'Mingguan';
+            } elseif ($price > 100000) {
+                $category = 'Bulanan (Premium/Jumbo)';
+            }
+
+            \App\Models\ExtractedPackage::create([
+                'pricelist_id' => $pricelist->id,
+                'provider' => $provider,
+                'package_name' => "Paket " . $provider,
+                'price' => $price,
+                'gb' => $gb,
+                'days' => $days,
+                'yield_val' => $gb > 0 ? ceil($price / $gb) : 0,
+                'category' => $category,
+            ]);
+        }
+
+        // Retroactively recalculate yield for ALL packages in this pricelist to ensure "unlimited" rule is applied correctly
+        $allPackages = \App\Models\ExtractedPackage::where('pricelist_id', $pricelist->id)->get();
+        foreach ($allPackages as $pkg) {
+            $price = (int)$pkg->price;
+            $gb = (float)$pkg->gb;
+            $days = (int)$pkg->days;
+            
+            if (stripos($pkg->package_name ?? '', 'unlimited') !== false && $days > 0) {
+                $pkg->yield_val = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
+            } else {
+                $pkg->yield_val = $gb > 0 ? ceil($price / $gb) : 0;
+            }
+            $pkg->save();
+        }
+
+        return response()->json(['success' => true]);
     }
 }

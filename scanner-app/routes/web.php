@@ -35,9 +35,11 @@ Route::get('/phpinfo', function () {
 Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/scanner', [ScannerController::class, 'index'])->name('scanner.index');
     Route::post('/scanner', [ScannerController::class, 'store'])->name('scanner.store');
+    Route::post('/scanner/upload-data', [ScannerController::class, 'uploadData'])->name('scanner.uploadData');
     Route::delete('/scanner/{pricelist}', [ScannerController::class, 'destroy'])->name('scanner.destroy');
     Route::get('/scanner/{pricelist}/export', [ScannerController::class, 'export'])->name('scanner.export');
     Route::get('/scanner/{pricelist}/export-csv', [ScannerController::class, 'exportCsv'])->name('scanner.exportCsv');
+    Route::get('/scanner/{pricelist}/export-txt', [ScannerController::class, 'exportTxt'])->name('scanner.exportTxt');
     Route::get('/scanner/{pricelist}/insights', [ScannerController::class, 'insights'])->name('scanner.insights');
     Route::post('/scanner/{pricelist}/chat', [ChatController::class, 'store'])->name('scanner.chat');
     Route::delete('/scanner/{pricelist}/message/{chatMessage}/chart', [ChatController::class, 'destroyChart'])->name('scanner.chat.destroyChart');
@@ -46,7 +48,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::put('/scanner/{pricelist}/rename', [ScannerController::class, 'rename'])->name('scanner.rename');
     Route::put('/scanner/{pricelist}/message/{chatMessage}', [ScannerController::class, 'updateMessage'])->name('scanner.message.update');
     Route::put('/scanner/{pricelist}/packages', [ScannerController::class, 'updatePackages'])->name('scanner.packages.update');
-
+    Route::put('/scanner/package/{package}', [ScannerController::class, 'updateSinglePackage'])->name('scanner.package.update');
+    Route::post('/scanner/{pricelist}/compare', [ScannerController::class, 'compareCsv'])->name('scanner.compareCsv');
+    Route::post('/scanner/{pricelist}/sync-csv', [ScannerController::class, 'syncCsv'])->name('scanner.syncCsv');
     Route::post('/api/scanner/{pricelist}/status', [ScannerController::class, 'updateStatus'])->name('scanner.status.update')->withoutMiddleware(['auth', 'verified']);
 
     // VLR Checker
