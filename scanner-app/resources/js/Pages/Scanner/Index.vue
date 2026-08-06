@@ -1,10 +1,16 @@
 <script setup>
 import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout.vue";
 import { Head, useForm, router } from "@inertiajs/vue3";
-import { ref, onMounted, onUnmounted, nextTick, computed } from "vue";
+import { ref, onMounted, onUnmounted, nextTick, computed, watch } from "vue";
 import axios from "axios";
 import ChartViewer from "@/Components/ChartViewer.vue";
 import Swal from "sweetalert2";
+import { Line, Bar, Scatter } from 'vue-chartjs'
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip as ChartTooltip, Legend } from 'chart.js'
+import { VueDatePicker } from '@vuepic/vue-datepicker';
+import '@vuepic/vue-datepicker/dist/main.css';
+
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, ChartTooltip, Legend)
 
 const globalErrorMsg = ref("");
 
@@ -46,9 +52,14 @@ const sidebarTab = ref("history"); // 'history' | 'keys' | 'models'
 const isChatOpen = ref(false); // Controls chat popup visibility
 const inputType = ref('scan'); // 'scan' | 'data'
 
+const aiInsightData = ref(null);
+const aiInsightLoading = ref(false);
+
 // Filter States
 const isFilterOpen = ref(false);
 const insightTimeFilter = ref('Semua Waktu');
+const insightStartDate = ref('');
+const insightEndDate = ref('');
 const activeSummaryTab = ref('yield');
 const filters = ref({
     providers: [],
@@ -63,9 +74,171 @@ const filters = ref({
     daysMax: null,
     yieldMin: null,
     yieldMax: null,
-    dateStart: '', // timestamp
+    dateStart: '',
     dateEnd: ''
 });
+
+// Market Trend States
+const trendDateRange = ref(null);
+const trendMetric = ref('avg_price');
+const trendRawData = ref(null);
+const trendLoading = ref(false);
+const marketSummaryFilter = ref('all');
+
+const getProviderColor = (providerName) => {
+    const prov = providerName.toUpperCase();
+    if (prov === '3' || prov.includes('TRI')) return '#D6005E';
+    if (prov.includes('AXIS')) return '#6F2B8C';
+    if (prov.includes('XL')) return '#0B2F75';
+    if (prov.includes('BY.U') || prov.includes('BYU')) return '#00B6ED';
+    if (prov.includes('TELKOMSEL') || prov.includes('TSEL')) return '#E60A14';
+    if (prov.includes('SMARTFREN') || prov.includes('SF')) return '#D1006B';
+    if (prov.includes('INDOSAT') || prov.includes('IM3')) return '#FCD116';
+    
+    // Hash string to color for unknown providers
+    let hash = 0;
+    for (let i = 0; i < prov.length; i++) {
+        hash = prov.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    const c = (hash & 0x00FFFFFF)
+        .toString(16)
+        .toUpperCase();
+    return '#' + '00000'.substring(0, 6 - c.length) + c;
+};
+
+// Compute chart data based on raw data and selected metric
+const trendChartData = computed(() => {
+    if (!trendRawData.value || !trendRawData.value.labels) {
+        return { labels: [], datasets: [] };
+    }
+    
+    const datasets = [];
+    
+    for (const [provider, data] of Object.entries(trendRawData.value.providers)) {
+        datasets.push({
+            label: provider,
+            backgroundColor: getProviderColor(provider),
+            borderColor: getProviderColor(provider),
+            data: data[trendMetric.value],
+            tension: 0.3, // smooth curves
+            borderWidth: 2,
+            pointRadius: 3,
+            pointHoverRadius: 6
+        });
+    }
+    
+    return {
+        labels: trendRawData.value.labels,
+        datasets: datasets
+    };
+});
+
+const trendChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: {
+            position: 'bottom',
+            labels: {
+                color: '#9CA3AF',
+                usePointStyle: true,
+                padding: 20
+            }
+        },
+        tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(17, 24, 39, 0.9)',
+            titleColor: '#fff',
+            bodyColor: '#e5e7eb',
+            borderColor: 'rgba(75, 85, 99, 0.5)',
+            borderWidth: 1,
+            callbacks: {
+                label: function(context) {
+                    let label = context.dataset.label || '';
+                    if (label) {
+                        label += ': ';
+                    }
+                    if (context.parsed.y !== null) {
+                        if (trendMetric.value === 'avg_price') {
+                            label += new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(context.parsed.y);
+                        } else if (trendMetric.value === 'avg_yield') {
+                            label += 'Rp' + new Intl.NumberFormat('id-ID').format(context.parsed.y) + '/GB';
+                        } else {
+                            label += context.parsed.y + ' Paket';
+                        }
+                    }
+                    return label;
+                }
+            }
+        }
+    },
+    scales: {
+        x: {
+            grid: {
+                color: 'rgba(75, 85, 99, 0.2)',
+                drawBorder: false
+            },
+            ticks: {
+                color: '#9CA3AF'
+            }
+        },
+        y: {
+            grid: {
+                color: 'rgba(75, 85, 99, 0.2)',
+                drawBorder: false
+            },
+            ticks: {
+                color: '#9CA3AF',
+                callback: function(value) {
+                    if (trendMetric.value === 'avg_price') return 'Rp' + (value / 1000) + 'k';
+                    if (trendMetric.value === 'avg_yield') return 'Rp' + value;
+                    return value;
+                }
+            }
+        }
+    },
+    interaction: {
+        mode: 'nearest',
+        axis: 'x',
+        intersect: false
+    }
+};
+
+const fetchTrendData = async () => {
+    trendLoading.value = true;
+    try {
+        let start_date = null;
+        let end_date = null;
+        if (trendDateRange.value && trendDateRange.value.length === 2) {
+            const s = trendDateRange.value[0];
+            const e = trendDateRange.value[1];
+            if (s instanceof Date) {
+                start_date = s.getFullYear() + '-' + String(s.getMonth()+1).padStart(2, '0') + '-' + String(s.getDate()).padStart(2, '0');
+            } else if (typeof s === 'string') {
+                start_date = s.substring(0, 10);
+            }
+            if (e instanceof Date) {
+                end_date = e.getFullYear() + '-' + String(e.getMonth()+1).padStart(2, '0') + '-' + String(e.getDate()).padStart(2, '0');
+            } else if (typeof e === 'string') {
+                end_date = e.substring(0, 10);
+            } else if (s && !e) {
+                // If only start date is selected in range, use today as end date
+                const today = new Date();
+                end_date = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
+            }
+        }
+
+        const res = await axios.get(route('api.trends'), {
+            params: { start_date, end_date, _: new Date().getTime() }
+        });
+        trendRawData.value = res.data;
+    } catch (e) {
+        showError(e, "Gagal mengambil data trend");
+    } finally {
+        trendLoading.value = false;
+    }
+};
 
 const resetFilters = () => {
     filters.value = {
@@ -124,7 +297,7 @@ const checkVlrNumbers = async () => {
     for (const number of list) {
         const provider = guessProvider(number);
         try {
-            const res = await axios.post('/vlr-checker/check', {
+            const res = await axios.post(route('vlr.check'), {
                 phone_number: number,
                 provider: provider
             });
@@ -179,7 +352,8 @@ const filteredPackagesList = computed(() => {
     if (!activeSession.value || !activeSession.value.packages) return [];
     
     // Insights filtering logic
-    const pkgs = activeSession.value.packages;
+    // Sort by id descending so newest appended data is on top
+    const pkgs = [...activeSession.value.packages].sort((a, b) => b.id - a.id);
     
     return pkgs.filter(pkg => {
         const f = filters.value;
@@ -205,7 +379,8 @@ const filteredPackagesList = computed(() => {
         if (f.yieldMin !== null && f.yieldMin !== '' && yieldVal < Number(f.yieldMin)) return false;
         if (f.yieldMax !== null && f.yieldMax !== '' && yieldVal > Number(f.yieldMax)) return false;
         
-        if (f.dateStart && pkg.image_timestamp && !pkg.image_timestamp.toLowerCase().includes(f.dateStart.toLowerCase())) return false;
+        const tsStr = pkg.image_timestamp || (pkg.created_at ? pkg.created_at.replace('T', ' ').substring(0, 19) : '');
+        if (f.dateStart && tsStr && !tsStr.toLowerCase().includes(f.dateStart.toLowerCase())) return false;
         
         if (f.flags && f.flags.length > 0) {
             const comp = comparisonResults.value[activeSessionId.value]?.[pkg.id];
@@ -258,13 +433,39 @@ const insightFilteredPackages = computed(() => {
             return pkgDate >= startOfMonth;
         } else if (insightTimeFilter.value === 'Tahun Ini') {
             return pkgDate >= startOfYear;
+        } else if (insightTimeFilter.value === 'Rentang Waktu') {
+            if (insightStartDate.value) {
+                const start = new Date(insightStartDate.value);
+                start.setHours(0, 0, 0, 0);
+                if (pkgDate < start) return false;
+            }
+            if (insightEndDate.value) {
+                const end = new Date(insightEndDate.value);
+                end.setHours(23, 59, 59, 999);
+                if (pkgDate > end) return false;
+            }
+            return true;
         }
         return true;
     });
 });
 
+const marketFilteredPackages = computed(() => {
+    let pkgs = insightFilteredPackages.value;
+    if (marketSummaryFilter.value === 'harian') {
+        pkgs = pkgs.filter(p => p.category === 'Harian (Sachet)');
+    } else if (marketSummaryFilter.value === 'mingguan') {
+        pkgs = pkgs.filter(p => p.category === 'Mingguan');
+    } else if (marketSummaryFilter.value === 'bulanan_sachet') {
+        pkgs = pkgs.filter(p => p.category === 'Bulanan (Standar)' || p.category === 'Bulanan');
+    } else if (marketSummaryFilter.value === 'bulanan_premium') {
+        pkgs = pkgs.filter(p => p.category === 'Bulanan (Premium/Jumbo)');
+    }
+    return pkgs;
+});
+
 const overallCompetitiveness = computed(() => {
-    const pkgs = insightFilteredPackages.value;
+    const pkgs = marketFilteredPackages.value;
     if (!pkgs || pkgs.length === 0) return [];
     
     const monthlyRules = [
@@ -319,8 +520,480 @@ const overallCompetitiveness = computed(() => {
 
 const formatNumber = (num, digits = 1) => Number(num).toLocaleString('id-ID', { maximumFractionDigits: digits });
 
-const marketAverages = computed(() => {
+const yieldDistributionChartData = computed(() => {
+    let pkgs = marketFilteredPackages.value;
+    if (!pkgs || pkgs.length === 0) return { labels: [], datasets: [] };
+
+    const baseProviders = ['3', 'AXIS', 'XL', 'BY.U', 'TELKOMSEL', 'SMARTFREN', 'IM3'];
+    
+    const yieldMap = {};
+    baseProviders.forEach(provider => {
+        const provPkgs = pkgs.filter(p => p.provider === provider && Number(p.yield_val) > 0);
+        if (provPkgs.length === 0) yieldMap[provider] = Infinity;
+        else yieldMap[provider] = Math.max(...provPkgs.map(p => Number(p.yield_val)));
+    });
+
+    const sortedProviders = [...baseProviders].sort((a, b) => yieldMap[a] - yieldMap[b]);
+
+    const datasetData = sortedProviders.map(provider => yieldMap[provider] === Infinity ? 0 : yieldMap[provider]);
+    const backgroundColors = sortedProviders.map(provider => getProviderColor(provider));
+
+    return {
+        labels: sortedProviders,
+        datasets: [{
+            label: 'Yield Range (Rp/GB)',
+            data: datasetData,
+            backgroundColor: backgroundColors,
+            borderWidth: 0,
+            borderRadius: 0
+        }]
+    };
+});
+
+const overallCompetitivenessChartData = computed(() => {
+    const data = overallCompetitiveness.value;
+    if (!data || data.length === 0) return { labels: [], datasets: [] };
+
+    const baseProviders = ['3', 'AXIS', 'XL', 'BY.U', 'TELKOMSEL', 'SMARTFREN', 'IM3'];
+    const compData = overallCompetitiveness.value || [];
+    const rankedProviders = compData.map(d => d.provider);
+    const sortedProviders = [...new Set([...rankedProviders, ...baseProviders])];
+
+    const datasetData = sortedProviders.map(provider => {
+        const item = data.find(d => d.provider === provider);
+        return item ? item.score : 0;
+    });
+    
+    const backgroundColors = sortedProviders.map(provider => getProviderColor(provider));
+
+    return {
+        labels: sortedProviders,
+        datasets: [{
+            label: 'Competitiveness Score',
+            data: datasetData,
+            backgroundColor: backgroundColors,
+            borderWidth: 0,
+            borderRadius: 0
+        }]
+    };
+});
+
+const competitiveHeatmapData = computed(() => {
+    let pkgs = marketFilteredPackages.value;
+    if (!pkgs || pkgs.length === 0) return { columns: [], rows: [] };
+
+    const baseProviders = ['3', 'AXIS', 'XL', 'BY.U', 'TELKOMSEL', 'SMARTFREN', 'IM3'];
+    const compData = overallCompetitiveness.value || [];
+    const rankedProviders = compData.map(d => d.provider);
+    const sortedProviders = [...new Set([...rankedProviders, ...baseProviders])];
+    
+    const columns = [
+        { key: 'overall', label: 'Overall' },
+        { key: 'harian', label: 'Daily', filter: (p) => p.category === 'Harian (Sachet)' || Number(p.days) <= 3 },
+        { key: 'weekly', label: 'Weekly', filter: (p) => p.category === 'Mingguan' || (Number(p.days) > 3 && Number(p.days) <= 7) },
+        { key: 'monthly', label: 'Monthly', filter: (p) => (p.category && p.category.includes('Bulanan')) || Number(p.days) >= 28 },
+        { key: 'premium', label: 'Premium', filter: (p) => (p.category === 'Bulanan (Premium/Jumbo)') || (Number(p.days) >= 28 && Number(p.price) > 50000) }
+    ];
+
+    const columnMetrics = {};
+    columns.forEach(col => {
+        if (col.key === 'overall') {
+            const data = overallCompetitiveness.value || [];
+            const scores = data.map(d => d.score).sort((a,b) => b - a); // descending
+            columnMetrics[col.key] = sortedProviders.reduce((acc, prov) => {
+                const item = data.find(d => d.provider === prov);
+                if (!item) {
+                    acc[prov] = 'gray';
+                } else {
+                    const rank = scores.indexOf(item.score);
+                    const total = scores.length;
+                    const percentile = rank / total;
+                    if (percentile <= 0.33) acc[prov] = 'green';
+                    else if (percentile <= 0.66) acc[prov] = 'yellow';
+                    else acc[prov] = 'red';
+                }
+                return acc;
+            }, {});
+        } else {
+            const provYields = sortedProviders.map(prov => {
+                const provPkgs = pkgs.filter(p => p.provider === prov && col.filter(p) && Number(p.yield_val) > 0);
+                if (provPkgs.length === 0) return { provider: prov, val: Infinity };
+                const minYield = Math.min(...provPkgs.map(p => Number(p.yield_val)));
+                return { provider: prov, val: minYield };
+            });
+            const validYields = provYields.filter(p => p.val !== Infinity).map(p => p.val).sort((a,b) => a - b);
+            
+            columnMetrics[col.key] = sortedProviders.reduce((acc, prov) => {
+                const item = provYields.find(p => p.provider === prov);
+                if (item.val === Infinity || validYields.length === 0) {
+                    acc[prov] = 'gray';
+                } else {
+                    const rank = validYields.indexOf(item.val);
+                    const total = validYields.length;
+                    const percentile = rank / total;
+                    if (percentile <= 0.33) acc[prov] = 'green';
+                    else if (percentile <= 0.66) acc[prov] = 'yellow';
+                    else acc[prov] = 'red';
+                }
+                return acc;
+            }, {});
+        }
+    });
+
+    const rows = sortedProviders.map(prov => {
+        const row = { provider: prov, cells: {} };
+        columns.forEach(col => {
+            row.cells[col.key] = columnMetrics[col.key][prov];
+        });
+        return row;
+    });
+
+    return {
+        columns: columns,
+        rows: rows
+    };
+});
+
+// ─── Competitive Yield Landscape (Monthly & Sachet) ────────────────────────
+const yieldLandscapeHiddenProviders = ref([]);
+
+const toggleYieldProvider = (prov) => {
+    const idx = yieldLandscapeHiddenProviders.value.indexOf(prov);
+    if (idx > -1) {
+        yieldLandscapeHiddenProviders.value.splice(idx, 1);
+    } else {
+        yieldLandscapeHiddenProviders.value.push(prov);
+    }
+};
+
+const yieldLandscapeProviders = computed(() => {
     const pkgs = insightFilteredPackages.value;
+    if (!pkgs || pkgs.length === 0) return [];
+    const set = new Set();
+    pkgs.forEach(p => {
+        if (p.provider) set.add(p.provider.toUpperCase().trim());
+    });
+    return Array.from(set).sort();
+});
+
+const getEupBucketIndex = (price) => {
+    const p = Number(price);
+    if (isNaN(p) || p < 25000) return 0;
+    if (p < 50000) return 1;
+    if (p < 75000) return 2;
+    if (p < 100000) return 3;
+    if (p < 125000) return 4;
+    if (p < 150000) return 5;
+    if (p < 200000) return 6;
+    return 7;
+};
+
+const monthlyYieldChartData = computed(() => {
+    const pkgs = insightFilteredPackages.value || [];
+    const monthlyPkgs = pkgs.filter(p => Number(p.days) >= 20 || String(p.package_name || '').toLowerCase().includes('bulan'));
+    
+    const datasets = [];
+    const bucketYields = Array.from({ length: 8 }, () => []);
+    
+    yieldLandscapeProviders.value.forEach(prov => {
+        const providerPoints = [];
+        monthlyPkgs.forEach(pkg => {
+            const pkgProv = (pkg.provider || '').toUpperCase().trim();
+            if (pkgProv === prov) {
+                const price = Number(pkg.price) || 0;
+                const gb = parseFloat(pkg.gb) || 1;
+                if (gb > 0 && price > 0) {
+                    const yieldVal = Math.round(price / gb);
+                    const idx = getEupBucketIndex(price);
+                    
+                    if (!yieldLandscapeHiddenProviders.value.includes(prov)) {
+                        bucketYields[idx].push(yieldVal);
+                    }
+                    
+                    const idHash = parseInt(pkg.id || 0) || Math.abs(price + Math.round(gb * 10));
+                    const jitter = Math.sin(idHash * 997) * 0.25;
+                    
+                    providerPoints.push({
+                        x: idx + jitter,
+                        y: yieldVal,
+                        pkgName: pkg.package_name || 'Paket Data',
+                        provider: prov,
+                        price: price,
+                        gb: gb,
+                        days: pkg.days || 30
+                    });
+                }
+            }
+        });
+        
+        if (providerPoints.length > 0) {
+            datasets.push({
+                label: prov,
+                type: 'scatter',
+                data: providerPoints,
+                backgroundColor: getProviderColor(prov),
+                borderColor: '#ffffff',
+                borderWidth: 1,
+                pointRadius: 6,
+                pointHoverRadius: 8,
+                hidden: yieldLandscapeHiddenProviders.value.includes(prov),
+                order: 1
+            });
+        }
+    });
+    
+    const medianPoints = [];
+    bucketYields.forEach((yields, idx) => {
+        if (yields.length > 0) {
+            yields.sort((a, b) => a - b);
+            const mid = Math.floor(yields.length / 2);
+            const medianVal = yields.length % 2 === 0 ? (yields[mid - 1] + yields[mid]) / 2 : yields[mid];
+            medianPoints.push({ x: idx, y: Math.round(medianVal) });
+        }
+    });
+    
+    if (medianPoints.length > 0) {
+        datasets.unshift({
+            label: 'Median per bucket',
+            type: 'line',
+            data: medianPoints,
+            borderColor: '#64748b',
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 6,
+            pointHoverRadius: 8,
+            pointBackgroundColor: '#334155',
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: 1.5,
+            pointStyle: 'rectRot',
+            fill: false,
+            tension: 0.25,
+            order: 0
+        });
+    }
+    
+    return { datasets };
+});
+
+const sachetYieldLabels = Array.from({ length: 19 }, (_, i) => `${i + 1}d`);
+
+const sachetYieldChartData = computed(() => {
+    const pkgs = insightFilteredPackages.value || [];
+    const sachetPkgs = pkgs.filter(p => Number(p.days) < 20 && !String(p.package_name || '').toLowerCase().includes('bulan'));
+    
+    const datasets = [];
+    const bucketYields = Array.from({ length: 19 }, () => []);
+    
+    yieldLandscapeProviders.value.forEach(prov => {
+        const providerPoints = [];
+        sachetPkgs.forEach(pkg => {
+            const pkgProv = (pkg.provider || '').toUpperCase().trim();
+            if (pkgProv === prov) {
+                const price = Number(pkg.price) || 0;
+                const gb = parseFloat(pkg.gb) || 1;
+                const days = Number(pkg.days) || 1;
+                if (gb > 0 && price > 0 && days >= 1 && days <= 19) {
+                    const yieldVal = Math.round(price / gb);
+                    const idx = days - 1;
+                    
+                    if (!yieldLandscapeHiddenProviders.value.includes(prov)) {
+                        bucketYields[idx].push(yieldVal);
+                    }
+                    
+                    const idHash = parseInt(pkg.id || 0) || Math.abs(price + Math.round(gb * 10));
+                    const jitter = Math.cos(idHash * 883) * 0.25;
+                    
+                    providerPoints.push({
+                        x: idx + jitter,
+                        y: yieldVal,
+                        pkgName: pkg.package_name || 'Paket Data',
+                        provider: prov,
+                        price: price,
+                        gb: gb,
+                        days: days
+                    });
+                }
+            }
+        });
+        
+        if (providerPoints.length > 0) {
+            datasets.push({
+                label: prov,
+                type: 'scatter',
+                data: providerPoints,
+                backgroundColor: getProviderColor(prov),
+                borderColor: '#ffffff',
+                borderWidth: 1,
+                pointRadius: 6,
+                pointHoverRadius: 8,
+                hidden: yieldLandscapeHiddenProviders.value.includes(prov),
+                order: 1
+            });
+        }
+    });
+    
+    const medianPoints = [];
+    bucketYields.forEach((yields, idx) => {
+        if (yields.length > 0) {
+            yields.sort((a, b) => a - b);
+            const mid = Math.floor(yields.length / 2);
+            const medianVal = yields.length % 2 === 0 ? (yields[mid - 1] + yields[mid]) / 2 : yields[mid];
+            medianPoints.push({ x: idx, y: Math.round(medianVal) });
+        }
+    });
+    
+    if (medianPoints.length > 0) {
+        datasets.unshift({
+            label: 'Median per bucket',
+            type: 'line',
+            data: medianPoints,
+            borderColor: '#64748b',
+            borderDash: [6, 4],
+            borderWidth: 2,
+            pointRadius: 6,
+            pointHoverRadius: 8,
+            pointBackgroundColor: '#334155',
+            pointBorderColor: '#ffffff',
+            pointBorderWidth: 1.5,
+            pointStyle: 'rectRot',
+            fill: false,
+            tension: 0.25,
+            order: 0
+        });
+    }
+    
+    return { datasets };
+});
+
+const getYieldChartOptions = (labels) => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    layout: {
+        padding: { top: 15, right: 25, bottom: 10, left: 15 }
+    },
+    scales: {
+        x: {
+            type: 'linear',
+            position: 'bottom',
+            min: -0.5,
+            max: labels.length - 0.5,
+            title: {
+                display: true,
+                text: labels.length === 8 ? 'Slab EUP (Rp)' : 'Validity (hari)',
+                color: '#334155',
+                font: { family: "'Inter', sans-serif", weight: '700', size: 12 }
+            },
+            afterBuildTicks: (scale) => {
+                scale.ticks = labels.map((_, i) => ({ value: i }));
+            },
+            ticks: {
+                callback: function(value) {
+                    return labels[Math.round(value)] || '';
+                },
+                color: '#475569',
+                font: { family: "'Inter', sans-serif", weight: '600', size: 11 },
+                padding: 8
+            },
+            grid: {
+                color: '#f1f5f9',
+                drawBorder: false
+            }
+        },
+        y: {
+            beginAtZero: true,
+            title: {
+                display: true,
+                text: 'Yield (Rp per GB)',
+                color: '#334155',
+                font: { family: "'Inter', sans-serif", weight: '700', size: 12 }
+            },
+            ticks: {
+                callback: function(value) {
+                    return Number(value).toLocaleString('id-ID');
+                },
+                color: '#475569',
+                font: { family: "'Inter', sans-serif", size: 11 },
+                padding: 8
+            },
+            grid: {
+                color: '#e2e8f0',
+                borderDash: [2, 2],
+                drawBorder: false
+            }
+        }
+    },
+    plugins: {
+        legend: {
+            display: false
+        },
+        tooltip: {
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            titleColor: '#f8fafc',
+            bodyColor: '#e2e8f0',
+            padding: 12,
+            cornerRadius: 8,
+            borderColor: '#334155',
+            borderWidth: 1,
+            displayColors: true,
+            callbacks: {
+                title: function(context) {
+                    const pt = context[0].raw;
+                    if (context[0].dataset.label === 'Median per bucket') {
+                        const idx = Math.round(pt.x);
+                        return `Median — ${labels[idx] || ''}`;
+                    }
+                    return `${pt.provider || context[0].dataset.label} — ${pt.pkgName || 'Paket Data'}`;
+                },
+                label: function(context) {
+                    const pt = context.raw;
+                    if (context.dataset.label === 'Median per bucket') {
+                        return `Median Yield: Rp ${Number(Math.round(pt.y)).toLocaleString('id-ID')} / GB`;
+                    }
+                    return [
+                        `Harga: Rp ${Number(pt.price || 0).toLocaleString('id-ID')} (${pt.gb} GB, ${pt.days} Hari)`,
+                        `Yield: Rp ${Number(Math.round(pt.y)).toLocaleString('id-ID')} / GB`
+                    ];
+                }
+            }
+        }
+    },
+    interaction: {
+        mode: 'nearest',
+        intersect: true
+    }
+});
+
+const insightChartOptions = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+        legend: { display: false },
+        tooltip: {
+            mode: 'index',
+            intersect: false,
+            backgroundColor: 'rgba(30, 30, 32, 0.9)',
+            titleColor: '#fff',
+            bodyColor: '#ccc',
+            borderColor: '#374151',
+            borderWidth: 1
+        }
+    },
+    scales: {
+        y: {
+            border: { display: true, color: '#4b5563', width: 1 },
+            grid: { display: false },
+            ticks: { color: '#9ca3af', font: { family: "'Inter', sans-serif", size: 10 } }
+        },
+        x: {
+            border: { display: true, color: '#4b5563', width: 1 },
+            grid: { display: false },
+            ticks: { color: '#9ca3af', font: { family: "'Inter', sans-serif", size: 10 }, maxRotation: 45, minRotation: 0 }
+        }
+    }
+};
+
+const marketAverages = computed(() => {
+    let pkgs = marketFilteredPackages.value;
     if (!pkgs || pkgs.length === 0) return { yield: null, price: null, quota: null, validity: null };
     
     const provMap = {};
@@ -386,45 +1059,83 @@ const marketAverages = computed(() => {
     const bestGb = gbSorted[0];
     const bestDays = daysSorted[0];
     
+    const getChartAxisInfo = (maxVal) => {
+        if (!maxVal || isNaN(maxVal) || maxVal === 0) return { ticks: [0], maxTick: 1 };
+        const rawStep = maxVal / 5;
+        const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+        const normalizedStep = rawStep / Math.max(magnitude, 1);
+        
+        let step;
+        if (normalizedStep < 1.5) step = 1 * magnitude;
+        else if (normalizedStep < 3) step = 2 * magnitude;
+        else if (normalizedStep < 7) step = 5 * magnitude;
+        else step = 10 * magnitude;
+        
+        const ticks = [];
+        let current = 0;
+        while (current <= maxVal) {
+            ticks.push(current);
+            current += step;
+        }
+        if (ticks[ticks.length - 1] < maxVal) {
+            ticks.push(ticks[ticks.length - 1] + step);
+        }
+        return { ticks, maxTick: ticks[ticks.length - 1] || 1 };
+    };
+
+    const maxYield = averages.length > 0 ? Math.max(...averages.map(i => i.avgYield)) : 0;
+    const maxPrice = averages.length > 0 ? Math.max(...averages.map(i => i.avgPrice)) : 0;
+    const maxGb = averages.length > 0 ? Math.max(...averages.map(i => i.avgGb)) : 0;
+    const maxDays = averages.length > 0 ? Math.max(...averages.map(i => i.avgDays)) : 0;
+    
+    const yieldAxis = getChartAxisInfo(maxYield);
+    const priceAxis = getChartAxisInfo(maxPrice);
+    const gbAxis = getChartAxisInfo(maxGb);
+    const daysAxis = getChartAxisInfo(maxDays);
+    
     return {
         yield: { 
             provider: bestYield.provider, 
             value: `Rp${formatNumber(bestYield.avgYield, 0)}/GB`,
+            axis: yieldAxis,
             list: yieldSorted.map(item => ({ 
                 ...item,
                 provider: item.provider, 
                 value: `Rp${formatNumber(item.avgYield, 0)}/GB`,
-                percent: item.avgYield ? (bestYield.avgYield / item.avgYield) * 100 : 0
+                percent: (item.avgYield / yieldAxis.maxTick) * 100
             }))
         },
         price: { 
             provider: bestPrice.provider, 
             value: `Rp${formatNumber(bestPrice.avgPrice, 0)}`,
+            axis: priceAxis,
             list: priceSorted.map(item => ({ 
                 ...item,
                 provider: item.provider, 
                 value: `Rp${formatNumber(item.avgPrice, 0)}`,
-                percent: item.avgPrice ? (bestPrice.avgPrice / item.avgPrice) * 100 : 0
+                percent: (item.avgPrice / priceAxis.maxTick) * 100
             }))
         },
         quota: { 
             provider: bestGb.provider, 
             value: `${formatNumber(bestGb.avgGb, 1)} GB`,
+            axis: gbAxis,
             list: gbSorted.map(item => ({ 
                 ...item,
                 provider: item.provider, 
                 value: `${formatNumber(item.avgGb, 1)} GB`,
-                percent: bestGb.avgGb ? (item.avgGb / bestGb.avgGb) * 100 : 0
+                percent: (item.avgGb / gbAxis.maxTick) * 100
             }))
         },
         validity: { 
             provider: bestDays.provider, 
             value: `${Math.round(bestDays.avgDays)} Hari`,
+            axis: daysAxis,
             list: daysSorted.map(item => ({ 
                 ...item,
                 provider: item.provider, 
                 value: `${Math.round(item.avgDays)} Hari`,
-                percent: bestDays.avgDays ? (item.avgDays / bestDays.avgDays) * 100 : 0
+                percent: (item.avgDays / daysAxis.maxTick) * 100
             }))
         }
     };
@@ -539,11 +1250,23 @@ const submit = () => {
         return;
     }
 
-    form.transform((data) => ({
-        ...data,
-        pricelist_id: activeSessionId.value,
-        is_append: !!activeSessionId.value,
-    })).post(route("scanner.store"), {
+    form.transform((data) => {
+        let ts = data.manual_timestamp;
+        if (ts && ts instanceof Date) {
+            ts = ts.getFullYear() + '-' + 
+                 String(ts.getMonth() + 1).padStart(2, '0') + '-' + 
+                 String(ts.getDate()).padStart(2, '0') + ' ' + 
+                 String(ts.getHours()).padStart(2, '0') + ':' + 
+                 String(ts.getMinutes()).padStart(2, '0') + ':' + 
+                 String(ts.getSeconds()).padStart(2, '0');
+        }
+        return {
+            ...data,
+            manual_timestamp: ts,
+            pricelist_id: activeSessionId.value,
+            is_append: !!activeSessionId.value,
+        };
+    }).post(route("scanner.store"), {
         preserveScroll: true,
         preserveState: true,
         onSuccess: (page) => {
@@ -661,6 +1384,47 @@ const bestOffersMonthly = (packages) => {
 
 const downloadExcel = (session) => {
     window.open(route("scanner.export", session.id), "_blank");
+};
+
+const generateAiInsight = async () => {
+    if (aiInsightLoading.value) return;
+    aiInsightLoading.value = true;
+    aiInsightData.value = null;
+    
+    try {
+        const provMap = {};
+        marketFilteredPackages.value.forEach(pkg => {
+            if (!provMap[pkg.provider]) {
+                provMap[pkg.provider] = { price: 0, gb: 0, days: 0, yield_val: 0, count: 0 };
+            }
+            provMap[pkg.provider].price += Number(pkg.price);
+            provMap[pkg.provider].gb += Number(pkg.gb);
+            provMap[pkg.provider].days += Number(pkg.days);
+            provMap[pkg.provider].yield_val += Number(pkg.yield_val);
+            provMap[pkg.provider].count++;
+        });
+        
+        const payload = Object.keys(provMap).map(prov => ({
+            provider: prov,
+            package_name: "Average " + marketSummaryFilter.value,
+            price: Math.round(provMap[prov].price / provMap[prov].count),
+            gb: provMap[prov].gb / provMap[prov].count,
+            days: Math.round(provMap[prov].days / provMap[prov].count),
+            yield_val: provMap[prov].yield_val / provMap[prov].count,
+            category: marketSummaryFilter.value
+        }));
+
+        const response = await axios.post(route('scanner.aiInsight'), { packages: payload });
+        aiInsightData.value = response.data.insight;
+    } catch (error) {
+        let msg = "Terjadi kesalahan saat memproses AI Insight.";
+        if (error.response && error.response.data && error.response.data.error) {
+            msg = error.response.data.error;
+        }
+        aiInsightData.value = "**Error:** " + msg;
+    } finally {
+        aiInsightLoading.value = false;
+    }
 };
 
 const toggleTable = (id) => {
@@ -1003,40 +1767,40 @@ const showComparisonDetail = (pkg, csvResult) => {
     } else {
         const csv = csvResult.csv_row;
         htmlContent = `
-        <div class="overflow-x-auto text-left mt-2">
-            <table class="w-full text-sm text-gray-300">
+        <div class="overflow-x-auto text-left mt-2 border border-slate-200 rounded-lg">
+            <table class="w-full text-sm text-slate-700 divide-y divide-slate-200">
                 <thead>
-                    <tr class="bg-gray-800 text-gray-400">
-                        <th class="p-3 border border-gray-700">Atribut</th>
-                        <th class="p-3 border border-gray-700">Hasil AI</th>
-                        <th class="p-3 border border-gray-700">Data CSV</th>
-                        <th class="p-3 border border-gray-700 text-center">Status</th>
+                    <tr class="bg-slate-50 text-slate-700 font-bold">
+                        <th class="p-3">Atribut</th>
+                        <th class="p-3">Hasil AI</th>
+                        <th class="p-3">Data CSV</th>
+                        <th class="p-3 text-center">Status</th>
                     </tr>
                 </thead>
-                <tbody>
+                <tbody class="divide-y divide-slate-200 bg-white font-medium">
                     <tr>
-                        <td class="p-3 border border-gray-700 font-medium">Provider</td>
-                        <td class="p-3 border border-gray-700">${pkg.provider}</td>
-                        <td class="p-3 border border-gray-700">${csv.provider}</td>
-                        <td class="p-3 border border-gray-700 text-center">✅</td>
+                        <td class="p-3 font-bold text-slate-800">Provider</td>
+                        <td class="p-3">${pkg.provider}</td>
+                        <td class="p-3">${csv.provider}</td>
+                        <td class="p-3 text-center">✅</td>
                     </tr>
                     <tr>
-                        <td class="p-3 border border-gray-700 font-medium">Kuota (GB)</td>
-                        <td class="p-3 border border-gray-700">${pkg.gb}</td>
-                        <td class="p-3 border border-gray-700">${csv.gb}</td>
-                        <td class="p-3 border border-gray-700 text-center">✅</td>
+                        <td class="p-3 font-bold text-slate-800">Kuota (GB)</td>
+                        <td class="p-3">${pkg.gb}</td>
+                        <td class="p-3">${csv.gb}</td>
+                        <td class="p-3 text-center">✅</td>
                     </tr>
                     <tr>
-                        <td class="p-3 border border-gray-700 font-medium">Harga (Rp)</td>
-                        <td class="p-3 border border-gray-700">${Number(pkg.price).toLocaleString('id-ID')}</td>
-                        <td class="p-3 border border-gray-700">${Number(csv.price).toLocaleString('id-ID')}</td>
-                        <td class="p-3 border border-gray-700 text-center">${pkg.price == csv.price ? '✅' : '❌'}</td>
+                        <td class="p-3 font-bold text-slate-800">Harga (Rp)</td>
+                        <td class="p-3">${Number(pkg.price).toLocaleString('id-ID')}</td>
+                        <td class="p-3">${Number(csv.price).toLocaleString('id-ID')}</td>
+                        <td class="p-3 text-center">${pkg.price == csv.price ? '✅' : '❌'}</td>
                     </tr>
                     <tr>
-                        <td class="p-3 border border-gray-700 font-medium">Masa Aktif</td>
-                        <td class="p-3 border border-gray-700">${pkg.days} Hari</td>
-                        <td class="p-3 border border-gray-700">${csv.days} Hari</td>
-                        <td class="p-3 border border-gray-700 text-center">${pkg.days == csv.days ? '✅' : '❌'}</td>
+                        <td class="p-3 font-bold text-slate-800">Masa Aktif</td>
+                        <td class="p-3">${pkg.days} Hari</td>
+                        <td class="p-3">${csv.days} Hari</td>
+                        <td class="p-3 text-center">${pkg.days == csv.days ? '✅' : '❌'}</td>
                     </tr>
                 </tbody>
             </table>
@@ -1047,11 +1811,11 @@ const showComparisonDetail = (pkg, csvResult) => {
     Swal.fire({
         title: 'Detail Perbandingan',
         html: htmlContent,
-        background: '#1a1a1c',
-        color: '#f3f4f6',
+        background: '#ffffff',
+        color: '#1e293b',
         showCancelButton: true,
-        confirmButtonColor: '#3b82f6',
-        cancelButtonColor: '#4b5563',
+        confirmButtonColor: '#2563eb',
+        cancelButtonColor: '#64748b',
         confirmButtonText: 'Edit Data',
         cancelButtonText: 'Tutup',
         width: '600px'
@@ -1308,6 +2072,11 @@ onMounted(() => {
     scrollToBottom();
     fetchKeys();
     pollStatus();
+    fetchTrendData();
+});
+
+watch(trendDateRange, () => {
+    fetchTrendData();
 });
 onUnmounted(() => {
     clearTimeout(pollTimer);
@@ -1317,25 +2086,25 @@ onUnmounted(() => {
 <template>
     <Head title="SmartScan AI" />
     <div
-        class="h-screen flex bg-[#131314] text-gray-100 font-sans overflow-hidden"
+        class="h-screen flex bg-slate-50 text-slate-800 font-sans overflow-hidden"
     >
         <!-- SIDEBAR -->
         <div
             :class="sidebarOpen ? 'w-72' : 'w-0 opacity-0'"
-            class="flex-shrink-0 bg-[#1e1e20] flex flex-col transition-all duration-300 overflow-hidden border-r border-gray-800"
+            class="flex-shrink-0 bg-white flex flex-col transition-all duration-300 overflow-hidden border-r border-slate-200/80 shadow-sm"
         >
             <!-- Sidebar Header & New Chat -->
             <div
-                class="p-4 border-b border-gray-800 flex items-center justify-between"
+                class="p-4 border-b border-slate-200/80 flex items-center justify-between"
             >
                 <h2
-                    class="text-lg font-semibold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400"
+                    class="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600"
                 >
                     SmartScan AI
                 </h2>
                 <button
                     @click="sidebarOpen = false"
-                    class="p-1 hover:bg-gray-700 rounded-lg transition text-gray-400"
+                    class="p-1 hover:bg-slate-100 rounded-lg transition text-slate-500 hover:text-slate-800"
                 >
                     <svg
                         class="w-5 h-5"
@@ -1353,15 +2122,15 @@ onUnmounted(() => {
                 </button>
             </div>
             <!-- Status & Input API Key -->
-            <div class="p-3 border-b border-gray-800 space-y-4">
+            <div class="p-3 border-b border-slate-200/80 space-y-4">
                 <!-- Status Usage -->
-                <div class="bg-[#2a2a2c] rounded-xl p-3 border border-gray-700">
-                    <div class="text-xs text-gray-400 mb-1">
+                <div class="bg-slate-50/80 rounded-xl p-3 border border-slate-200 shadow-[0_2px_10px_rgba(0,0,0,0.02)]">
+                    <div class="text-xs text-slate-500 mb-1">
                         Kapasitas Model
                     </div>
                     <div class="flex items-end justify-between">
                         <div>
-                            <div class="text-xl font-bold text-blue-400">
+                            <div class="text-xl font-bold text-blue-600">
                                 {{
                                     Math.max(
                                         0,
@@ -1369,20 +2138,20 @@ onUnmounted(() => {
                                     )
                                 }}
                             </div>
-                            <div class="text-[10px] text-gray-500">
+                            <div class="text-[10px] text-slate-400">
                                 Permintaan tersisa
                             </div>
                         </div>
                         <div class="text-right">
-                            <div class="text-sm font-semibold text-gray-300">
+                            <div class="text-sm font-semibold text-slate-700">
                                 {{ activeKeyCount }} Key
                             </div>
-                            <div class="text-[10px] text-gray-500">Aktif</div>
+                            <div class="text-[10px] text-slate-400">Aktif</div>
                         </div>
                     </div>
                     <!-- Progress Bar -->
                     <div
-                        class="w-full bg-gray-800 rounded-full h-1.5 mt-2 overflow-hidden"
+                        class="w-full bg-slate-200 rounded-full h-1.5 mt-2 overflow-hidden"
                         title="Persentase Penggunaan"
                     >
                         <div
@@ -1398,17 +2167,17 @@ onUnmounted(() => {
                         v-model="newKeyInput"
                         type="password"
                         placeholder="Masukkan API Key Gemini..."
-                        class="w-full bg-[#1e1e20] border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 placeholder-gray-500 focus:outline-none focus:border-blue-500 transition"
+                        class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
                         required
                     />
                     <button
                         type="submit"
                         :disabled="keyLoading"
-                        class="bg-[#2a2a2c] hover:bg-[#353538] border border-gray-700 text-gray-300 rounded-lg px-3 py-2 transition flex items-center justify-center shrink-0 disabled:opacity-50"
+                        class="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded-lg px-3 py-2 transition flex items-center justify-center shrink-0 disabled:opacity-50"
                     >
                         <svg
                             v-if="keyLoading"
-                            class="w-4 h-4 animate-spin text-blue-400"
+                            class="w-4 h-4 animate-spin text-blue-600"
                             fill="none"
                             viewBox="0 0 24 24"
                         >
@@ -1428,7 +2197,7 @@ onUnmounted(() => {
                         </svg>
                         <svg
                             v-else
-                            class="w-4 h-4 text-blue-400"
+                            class="w-4 h-4 text-blue-600"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -1445,7 +2214,7 @@ onUnmounted(() => {
 
                 <button
                     @click="newChat"
-                    class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-[#2a2a2c] hover:bg-[#353538] text-sm font-medium rounded-lg transition border border-gray-700"
+                    class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium rounded-lg transition border border-slate-300 shadow-sm hover:text-indigo-600 hover:border-indigo-200"
                 >
                     <svg
                         class="w-4 h-4"
@@ -1479,7 +2248,7 @@ onUnmounted(() => {
                 class="flex-1 overflow-y-auto px-3 pb-4 space-y-1 custom-scrollbar"
             >
                 <div
-                    class="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 mt-4 px-2"
+                    class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2 mt-4 px-2"
                 >
                     Terbaru
                 </div>
@@ -1490,14 +2259,14 @@ onUnmounted(() => {
                     class="group flex items-center justify-between p-2 rounded-lg cursor-pointer transition text-sm"
                     :class="
                         activeSessionId === list.id
-                            ? 'bg-[#2a2a2c] text-white'
-                            : 'text-gray-300 hover:bg-[#202022] hover:text-white'
+                            ? 'bg-indigo-50/80 border border-indigo-200/60 text-indigo-900 font-medium shadow-sm'
+                            : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
                     "
                     @click="activeSessionId = list.id"
                 >
                     <div class="flex items-center gap-3 overflow-hidden flex-1">
                         <svg
-                            class="w-4 h-4 text-gray-500 shrink-0"
+                            class="w-4 h-4 text-slate-400 shrink-0"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -1517,7 +2286,7 @@ onUnmounted(() => {
                             @blur="saveRename(list)"
                             @click.stop
                             v-focus
-                            class="bg-[#131314] text-white text-sm px-2 py-1 rounded border border-blue-500 outline-none w-full"
+                            class="bg-white text-slate-900 text-sm px-2 py-1 rounded border border-blue-500 outline-none w-full shadow-inner"
                         />
                         <span v-else class="truncate">{{ list.filename }}</span>
                     </div>
@@ -1528,7 +2297,7 @@ onUnmounted(() => {
                     >
                         <button
                             @click.stop="startRename(list)"
-                            class="p-1 hover:bg-gray-600 rounded text-gray-400 hover:text-white"
+                            class="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-700"
                             title="Rename"
                         >
                             <svg
@@ -1547,7 +2316,7 @@ onUnmounted(() => {
                         </button>
                         <button
                             @click.stop="deleteSession(list.id)"
-                            class="p-1 hover:bg-red-900/50 rounded text-gray-400 hover:text-red-400"
+                            class="p-1 hover:bg-red-100 rounded text-slate-400 hover:text-red-600"
                             title="Delete"
                         >
                             <svg
@@ -1569,7 +2338,7 @@ onUnmounted(() => {
             </div>
 
             <div
-                class="p-4 border-t border-gray-800 text-xs text-gray-500 flex justify-between items-center"
+                class="p-4 border-t border-slate-200/80 text-xs text-slate-500 flex justify-between items-center bg-slate-50/50"
             >
                 <span>API Keys: {{ activeKeyCount }} active</span>
                 <span title="Total Usage">{{ totalUsage }} reqs</span>
@@ -1577,15 +2346,15 @@ onUnmounted(() => {
         </div>
 
         <!-- MAIN AREA -->
-        <div class="flex-1 flex flex-col h-screen relative bg-[#131314]">
+        <div class="flex-1 flex flex-col h-screen relative bg-[#f8fafc]">
             <!-- Topbar (Mobile Hamburger) -->
             <div
-                class="h-14 flex items-center px-4 border-b border-gray-800 shrink-0 bg-[#1e1e20]/50 backdrop-blur"
+                class="h-14 flex items-center px-4 border-b border-slate-200/80 shrink-0 bg-white/80 backdrop-blur"
             >
                 <button
                     v-if="!sidebarOpen"
                     @click="sidebarOpen = true"
-                    class="p-2 hover:bg-gray-800 rounded-lg text-gray-400 transition"
+                    class="p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition"
                 >
                     <svg
                         class="w-5 h-5"
@@ -1604,7 +2373,7 @@ onUnmounted(() => {
                 <div class="ml-auto flex items-center gap-2">
                     <span
                         v-if="activeSession"
-                        class="text-sm text-gray-300 font-medium"
+                        class="text-sm text-slate-700 font-medium"
                         >{{ activeSession.filename }}</span
                     >
                 </div>
@@ -1622,11 +2391,11 @@ onUnmounted(() => {
                     >
                         <div class="text-center mb-8">
                             <h1
-                                class="text-4xl font-bold mb-3 text-white tracking-tight"
+                                class="text-4xl font-extrabold mb-3 text-slate-900 tracking-tight"
                             >
                                 SmartScan AI
                             </h1>
-                            <p class="text-gray-400 text-lg">
+                            <p class="text-slate-500 text-lg">
                                 Pilih modul dashboard dan unggah file untuk
                                 dianalisis.
                             </p>
@@ -1634,14 +2403,14 @@ onUnmounted(() => {
 
                         <!-- Tabs -->
                         <div class="flex justify-center mb-8">
-                            <div class="bg-[#1e1e20] p-1 rounded-xl inline-flex shadow-lg border border-gray-800">
-                                <button @click="inputType = 'scan'" :class="inputType === 'scan' ? 'bg-indigo-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-gray-800'" class="px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-300">
+                            <div class="bg-slate-200/70 p-1 rounded-xl inline-flex shadow-inner border border-slate-300/50">
+                                <button @click="inputType = 'scan'" :class="inputType === 'scan' ? 'bg-indigo-600 text-white shadow-md' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/50'" class="px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-300">
                                     <div class="flex items-center gap-2">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                                         Scan Gambar (AI)
                                     </div>
                                 </button>
-                                <button @click="inputType = 'data'" :class="inputType === 'data' ? 'bg-green-600 text-white shadow-md' : 'text-gray-400 hover:text-white hover:bg-gray-800'" class="px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-300">
+                                <button @click="inputType = 'data'" :class="inputType === 'data' ? 'bg-green-600 text-white shadow-md' : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100/50'" class="px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-300">
                                     <div class="flex items-center gap-2">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                         Input Data Manual
@@ -1653,7 +2422,7 @@ onUnmounted(() => {
                         <!-- Drag & Drop Zone (Input File Image) -->
                         <div v-show="inputType === 'scan'" class="w-full relative mb-12">
                             <label
-                                class="w-full h-[320px] border-2 border-dashed border-gray-700 hover:border-indigo-500 hover:bg-[#1e1e20] transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-[0_10px_30px_rgba(0,0,0,0.3)] relative overflow-hidden bg-[#161618]"
+                                class="w-full h-[320px] border-2 border-dashed border-slate-300 hover:border-indigo-500 hover:bg-indigo-50/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-[0_4px_20px_rgba(0,0,0,0.04)] relative overflow-hidden bg-white"
                                 :class="{ 'cursor-default pointer-events-none': form.images.length > 0 }"
                             >
                                 <input
@@ -1668,45 +2437,45 @@ onUnmounted(() => {
                                 <!-- Loading Overlay when Processing -->
                                 <div
                                     v-if="form.processing"
-                                    class="absolute inset-0 bg-[#161618]/90 backdrop-blur flex flex-col items-center justify-center z-20 transition-all"
+                                    class="absolute inset-0 bg-white/90 backdrop-blur flex flex-col items-center justify-center z-20 transition-all"
                                 >
                                     <div class="w-12 h-12 border-4 border-indigo-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                                    <span class="font-semibold text-indigo-400 text-lg tracking-wide animate-pulse">Mengunggah & Membuat Sesi...</span>
+                                    <span class="font-semibold text-indigo-600 text-lg tracking-wide animate-pulse">Mengunggah & Membuat Sesi...</span>
                                 </div>
 
                                 <!-- Staging State (Files Selected) -->
-                                <div v-if="form.images.length > 0" class="absolute inset-0 bg-[#161618] flex flex-col items-center justify-center p-8 z-10">
+                                <div v-if="form.images.length > 0" class="absolute inset-0 bg-slate-50 flex flex-col items-center justify-center p-8 z-10">
                                     <div class="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center mb-4">
-                                        <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                        <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                                     </div>
-                                    <h3 class="text-xl font-bold text-white mb-2">{{ form.images.length }} File Terpilih</h3>
+                                    <h3 class="text-xl font-bold text-slate-800 mb-2">{{ form.images.length }} File Terpilih</h3>
                                     
                                     <!-- Progress Bar -->
                                     <div class="w-full max-w-md mt-2 mb-1">
-                                        <div class="flex justify-between text-sm text-gray-400 mb-2">
+                                        <div class="flex justify-between text-sm text-slate-500 mb-2">
                                             <span>Ukuran: {{ formatBytes(totalFileSize) }}</span>
                                             <span>Batas: 100 MB</span>
                                         </div>
-                                        <div class="w-full bg-gray-800 rounded-full h-3 overflow-hidden">
+                                        <div class="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
                                             <div 
                                                 class="h-full rounded-full transition-all duration-500"
                                                 :class="fileSizePercentage >= 100 ? 'bg-red-500' : 'bg-indigo-500'"
                                                 :style="{ width: fileSizePercentage + '%' }"
                                             ></div>
                                         </div>
-                                        <p v-if="fileSizePercentage >= 100" class="text-red-400 text-sm mt-2 text-center">Ukuran melebihi batas maksimal!</p>
+                                        <p v-if="fileSizePercentage >= 100" class="text-red-500 text-sm mt-2 text-center font-medium">Ukuran melebihi batas maksimal!</p>
                                     </div>
 
                                     <!-- Timestamp Override -->
                                     <div class="w-full max-w-xs mt-1 mb-2 flex flex-col pointer-events-auto">
-                                        <label class="text-xs text-gray-400 mb-1">Atur Waktu (Opsional)</label>
-                                        <input type="date" v-model="form.manual_timestamp" class="w-full bg-[#1e1e20] border border-gray-700 rounded-lg text-sm text-gray-200 px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500 text-center">
+                                        <label class="text-xs text-slate-500 mb-1">Atur Waktu (Opsional)</label>
+                                        <input type="date" v-model="form.manual_timestamp" class="w-full bg-white border border-slate-300 rounded-lg text-sm text-slate-800 px-3 py-2 focus:ring-indigo-500 focus:border-indigo-500 text-center shadow-sm">
                                     </div>
 
                                     <div class="flex gap-4 mt-3 pointer-events-auto">
                                         <button 
                                             @click.stop="form.images = []" 
-                                            class="px-5 py-2.5 rounded-xl border border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white transition-colors font-medium"
+                                            class="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors font-medium"
                                         >
                                             Batal
                                         </button>
@@ -1722,11 +2491,11 @@ onUnmounted(() => {
 
                                 <!-- Default State (No Files) -->
                                 <template v-else>
-                                    <div class="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mb-5 group-hover:scale-110 group-hover:shadow-[0_0_30px_rgba(99,102,241,0.3)] transition-all group-hover:bg-indigo-500/20">
-                                        <svg class="w-10 h-10 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                                    <div class="w-20 h-20 bg-indigo-500/10 rounded-full flex items-center justify-center mb-5 group-hover:scale-110 group-hover:shadow-[0_0_30px_rgba(99,102,241,0.2)] transition-all group-hover:bg-indigo-500/20">
+                                        <svg class="w-10 h-10 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
                                     </div>
-                                    <span class="text-xl font-bold text-gray-200 mb-2 group-hover:text-indigo-300 transition-colors">Pilih atau Tarik Gambar / ZIP ke Sini</span>
-                                    <span class="text-sm text-gray-500 bg-black/20 px-3 py-1 rounded-full">Mendukung format JPG, PNG, dan ZIP</span>
+                                    <span class="text-xl font-bold text-slate-700 mb-2 group-hover:text-indigo-600 transition-colors">Pilih atau Tarik Gambar / ZIP ke Sini</span>
+                                    <span class="text-sm text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">Mendukung format JPG, PNG, dan ZIP</span>
                                 </template>
                             </label>
                         </div>
@@ -1734,7 +2503,7 @@ onUnmounted(() => {
                         <!-- Input Data (CSV/Excel) -->
                         <div v-show="inputType === 'data'" class="w-full relative mb-12">
                             <label
-                                class="w-full h-[320px] border-2 border-dashed border-gray-700 hover:border-green-500 hover:bg-[#1e1e20] transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-[0_10px_30px_rgba(0,0,0,0.3)] relative overflow-hidden bg-[#161618]"
+                                class="w-full h-[320px] border-2 border-dashed border-slate-300 hover:border-green-500 hover:bg-green-50/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-[0_4px_20px_rgba(0,0,0,0.04)] relative overflow-hidden bg-white"
                                 :class="{ 'cursor-default pointer-events-none': uploadDataForm.data_file }"
                             >
                                 <input
@@ -1748,29 +2517,29 @@ onUnmounted(() => {
                                 <!-- Loading Overlay when Processing -->
                                 <div
                                     v-if="uploadDataForm.processing"
-                                    class="absolute inset-0 bg-[#161618]/90 backdrop-blur flex flex-col items-center justify-center z-20 transition-all"
+                                    class="absolute inset-0 bg-white/90 backdrop-blur flex flex-col items-center justify-center z-20 transition-all"
                                 >
                                     <div class="w-12 h-12 border-4 border-green-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-                                    <span class="font-semibold text-green-400 text-lg tracking-wide animate-pulse">Mengimpor Data...</span>
+                                    <span class="font-semibold text-green-600 text-lg tracking-wide animate-pulse">Mengimpor Data...</span>
                                 </div>
 
                                 <!-- Staging State (File Selected) -->
-                                <div v-if="uploadDataForm.data_file" class="absolute inset-0 bg-[#161618] flex flex-col items-center justify-center p-8 z-10">
+                                <div v-if="uploadDataForm.data_file" class="absolute inset-0 bg-slate-50 flex flex-col items-center justify-center p-8 z-10">
                                     <div class="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center mb-4">
-                                        <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                                        <svg class="w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                                     </div>
-                                    <h3 class="text-xl font-bold text-white mb-2">{{ uploadDataForm.data_file.name }}</h3>
+                                    <h3 class="text-xl font-bold text-slate-800 mb-2">{{ uploadDataForm.data_file.name }}</h3>
                                     
                                     <!-- Timestamp Override -->
                                     <div class="w-full max-w-xs mt-2 mb-2 flex flex-col pointer-events-auto">
-                                        <label class="text-xs text-gray-400 mb-1">Atur Waktu (Opsional)</label>
-                                        <input type="date" v-model="uploadDataForm.manual_timestamp" class="w-full bg-[#1e1e20] border border-gray-700 rounded-lg text-sm text-gray-200 px-3 py-2 focus:ring-green-500 focus:border-green-500 text-center">
+                                        <label class="text-xs text-slate-500 mb-1">Atur Waktu (Opsional)</label>
+                                        <input type="date" v-model="uploadDataForm.manual_timestamp" class="w-full bg-white border border-slate-300 rounded-lg text-sm text-slate-800 px-3 py-2 focus:ring-green-500 focus:border-green-500 text-center shadow-sm">
                                     </div>
 
                                     <div class="flex gap-4 mt-3 pointer-events-auto">
                                         <button 
                                             @click.stop="uploadDataForm.data_file = null" 
-                                            class="px-5 py-2.5 rounded-xl border border-gray-600 text-gray-300 hover:bg-gray-800 hover:text-white transition-colors font-medium"
+                                            class="px-5 py-2.5 rounded-xl border border-slate-300 text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors font-medium"
                                         >
                                             Batal
                                         </button>
@@ -1785,11 +2554,11 @@ onUnmounted(() => {
 
                                 <!-- Default State (No Files) -->
                                 <template v-else>
-                                    <div class="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mb-5 group-hover:scale-110 group-hover:shadow-[0_0_30px_rgba(34,197,94,0.3)] transition-all group-hover:bg-green-500/20">
-                                        <svg class="w-10 h-10 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                    <div class="w-20 h-20 bg-green-500/10 rounded-full flex items-center justify-center mb-5 group-hover:scale-110 group-hover:shadow-[0_0_30px_rgba(34,197,94,0.2)] transition-all group-hover:bg-green-500/20">
+                                        <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                     </div>
-                                    <span class="text-xl font-bold text-gray-200 mb-2 group-hover:text-green-300 transition-colors">Pilih Data Excel / CSV</span>
-                                    <span class="text-sm text-gray-500 bg-black/20 px-3 py-1 rounded-full">Mendukung format XLSX, XLS, CSV, TXT</span>
+                                    <span class="text-xl font-bold text-slate-700 mb-2 group-hover:text-green-600 transition-colors">Pilih Data Excel / CSV</span>
+                                    <span class="text-sm text-slate-500 bg-slate-100 px-3 py-1 rounded-full border border-slate-200">Mendukung format XLSX, XLS, CSV, TXT</span>
                                 </template>
                             </label>
                         </div>
@@ -1799,14 +2568,21 @@ onUnmounted(() => {
                     <template v-else>
                         <!-- Top Action Bar -->
                         <div
-                            class="flex justify-between items-center bg-[#1e1e20] p-4 rounded-2xl border border-gray-800 shadow-sm mb-6"
+                            class="flex justify-between items-center bg-white p-4 rounded-2xl border border-slate-200 shadow-sm mb-6"
                         >
-                            <h2 class="text-xl font-bold text-white">
+                            <h2 class="text-xl font-bold text-slate-800">
                                 {{ activeSession.filename }}
                             </h2>
-                            <div class="flex gap-3">
+                            <div class="flex gap-3 items-center">
+                                <div class="w-48">
+                                    <VueDatePicker
+                                        v-model="form.manual_timestamp"
+                                        :enable-time-picker="true"
+                                        placeholder="Atur Waktu (Opsional)"
+                                    />
+                                </div>
                                 <label
-                                    class="cursor-pointer px-4 py-2 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30 border border-indigo-800/50 rounded-lg text-sm font-medium transition flex items-center gap-2"
+                                    class="cursor-pointer px-4 py-2 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 border border-indigo-200 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-sm"
                                     :class="{
                                         'opacity-50 cursor-not-allowed':
                                             form.processing,
@@ -1845,7 +2621,7 @@ onUnmounted(() => {
                                 </label>
                                 
                                 <label
-                                    class="cursor-pointer px-4 py-2 bg-green-600/20 text-green-400 hover:bg-green-600/30 border border-green-800/50 rounded-lg text-sm font-medium transition flex items-center gap-2"
+                                    class="cursor-pointer px-4 py-2 bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-sm"
                                     :class="{
                                         'opacity-50 cursor-not-allowed':
                                             form.processing,
@@ -1888,7 +2664,7 @@ onUnmounted(() => {
                                             activeSession.packages &&
                                             activeSession.packages.length > 0
                                         "
-                                        class="px-4 py-2 bg-green-600/20 text-green-400 hover:bg-green-600/30 border border-green-800/50 rounded-lg text-sm font-medium transition flex items-center gap-2"
+                                        class="px-4 py-2 bg-green-50 text-green-700 hover:bg-green-100 border border-green-200 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-sm"
                                     >
                                         <svg
                                             class="w-4 h-4"
@@ -1906,14 +2682,14 @@ onUnmounted(() => {
                                         Download
                                     </button>
                                     <div class="absolute right-0 pt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
-                                        <div class="w-40 bg-[#1e1e20] border border-gray-700 rounded-lg shadow-xl overflow-hidden flex flex-col">
-                                            <a :href="route('scanner.export', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2">
+                                        <div class="w-40 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden flex flex-col">
+                                            <a :href="route('scanner.export', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-2">
                                                 <span>📊</span> Excel
                                             </a>
-                                            <a :href="route('scanner.exportCsv', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2 border-t border-gray-800">
+                                            <a :href="route('scanner.exportCsv', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-2 border-t border-slate-100">
                                                 <span>📝</span> CSV
                                             </a>
-                                            <a :href="route('scanner.exportTxt', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-gray-300 hover:bg-gray-700 hover:text-white transition-colors flex items-center gap-2 border-t border-gray-800">
+                                            <a :href="route('scanner.exportTxt', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-slate-700 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-2 border-t border-slate-100">
                                                 <span>📄</span> Text
                                             </a>
                                         </div>
@@ -1922,7 +2698,7 @@ onUnmounted(() => {
 
                                 <button
                                     @click="isChatOpen = true"
-                                    class="px-4 py-2 bg-indigo-600/20 text-indigo-400 hover:bg-indigo-600/30 rounded-lg text-sm font-medium transition flex items-center gap-2"
+                                    class="px-4 py-2 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-md shadow-indigo-500/10"
                                 >
                                     <svg
                                         class="w-4 h-4"
@@ -1951,15 +2727,15 @@ onUnmounted(() => {
                                     'Menyusun insight & benchmarking...',
                                 ].includes(activeSession.status) || activeSession.status?.includes('Mengekstrak data dari gambar')
                             "
-                            class="bg-[#1e1e20] p-5 rounded-2xl border border-blue-500/30 flex flex-col gap-4 shadow-lg mb-6"
+                            class="bg-white p-5 rounded-2xl border border-blue-200 flex flex-col gap-4 shadow-md mb-6"
                         >
                             <div class="flex items-center justify-between">
                                 <div class="flex items-center gap-4">
                                     <div
-                                        class="w-6 h-6 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"
+                                        class="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"
                                     ></div>
                                     <span
-                                        class="text-base font-medium text-blue-300 animate-pulse"
+                                        class="text-base font-semibold text-blue-700 animate-pulse"
                                         >Memproses:
                                         {{
                                             activeSession.status === "pending"
@@ -1970,7 +2746,7 @@ onUnmounted(() => {
                                 </div>
                                 <button
                                     @click="cancelScan(activeSession.id)"
-                                    class="px-3 py-1.5 bg-red-600/20 text-red-400 hover:bg-red-600/40 border border-red-800 rounded-lg transition text-sm font-medium flex items-center gap-1.5"
+                                    class="px-3 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 rounded-lg transition text-sm font-medium flex items-center gap-1.5"
                                     :disabled="cancelLoading[activeSession.id]"
                                 >
                                     <svg
@@ -2013,20 +2789,20 @@ onUnmounted(() => {
 
                             <!-- Progress Bar -->
                             <div class="flex items-center gap-3 mt-1">
-                                <div class="w-full bg-gray-800/80 rounded-full h-2.5 overflow-hidden border border-gray-700/50">
-                                    <div class="bg-gradient-to-r from-blue-500 to-indigo-500 h-2.5 rounded-full transition-all duration-700 ease-out relative overflow-hidden shadow-[0_0_12px_rgba(59,130,246,0.5)]"
+                                <div class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden border border-slate-300/50">
+                                    <div class="bg-gradient-to-r from-blue-500 to-indigo-500 h-2.5 rounded-full transition-all duration-700 ease-out relative overflow-hidden shadow-[0_0_12px_rgba(59,130,246,0.3)]"
                                          :style="{ width: extractionProgress + '%' }">
                                          <div class="absolute inset-0 bg-white/20 w-full h-full animate-[pulse_2s_infinite]"></div>
                                     </div>
                                 </div>
-                                <span class="text-sm font-medium text-blue-400 w-10 text-right">{{ extractionProgress }}%</span>
+                                <span class="text-sm font-bold text-blue-600 w-10 text-right">{{ extractionProgress }}%</span>
                             </div>
                         </div>
 
                         <!-- Error State Processing -->
                         <div
                             v-if="activeSession.status === 'failed'"
-                            class="bg-red-900/10 border border-red-900/50 rounded-2xl p-6 flex items-start gap-4 mb-6"
+                            class="bg-red-50/90 border border-red-200 rounded-2xl p-6 flex items-start gap-4 mb-6 shadow-sm"
                         >
                             <svg
                                 class="w-8 h-8 text-red-500 shrink-0"
@@ -2042,15 +2818,15 @@ onUnmounted(() => {
                                 ></path>
                             </svg>
                             <div>
-                                <h4 class="font-bold text-red-400 text-lg mb-2">
+                                <h4 class="font-bold text-red-700 text-lg mb-2">
                                     Gagal Memproses Data
                                 </h4>
-                                <p class="text-red-300/80 mb-4">
+                                <p class="text-red-600 mb-4">
                                     {{ activeSession.error_message }}
                                 </p>
                                 <button
                                     @click="retryScan(activeSession.id)"
-                                    class="px-4 py-2 bg-red-600/20 text-red-400 hover:bg-red-600/40 border border-red-800 rounded-lg transition flex items-center gap-2 font-medium"
+                                    class="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg transition flex items-center gap-2 font-semibold shadow-sm"
                                     :disabled="retryLoading[activeSession.id]"
                                 >
                                     <svg
@@ -2102,25 +2878,18 @@ onUnmounted(() => {
                                 activeSession.packages &&
                                 activeSession.packages.length > 0
                             "
-                            class="bg-[#1e1e20] border border-blue-900/50 rounded-2xl overflow-hidden shadow-xl mb-6 relative"
+                            class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-md mb-6 relative"
                         >
                             <!-- Background accent -->
                             <div
-                                class="absolute top-0 left-0 w-1 h-full bg-blue-500"
+                                class="absolute top-0 left-0 w-1 h-full bg-blue-600"
                             ></div>
 
-                            <div class="px-6 py-4 border-b border-gray-800 bg-[#252528]/50 flex justify-between items-center">
-                                <h3 class="font-bold text-white flex items-center gap-2">
-                                    <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                                <h3 class="font-bold text-slate-800 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                     Summarize Insight (Competitor Benchmark)
                                 </h3>
-                                <select v-model="insightTimeFilter" class="bg-[#1e1e20] text-sm text-gray-300 border border-gray-700 rounded-md px-3 py-1 focus:outline-none focus:border-indigo-500">
-                                    <option>Semua Waktu</option>
-                                    <option>Hari Ini</option>
-                                    <option>Minggu Ini</option>
-                                    <option>Bulan Ini</option>
-                                    <option>Tahun Ini</option>
-                                </select>
                             </div>
 
                             <div class="p-6">
@@ -2129,7 +2898,7 @@ onUnmounted(() => {
                                 >
                                     <div>
                                         <h4
-                                            class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4 border-b border-gray-800 pb-2"
+                                            class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4 border-b border-slate-200 pb-2"
                                         >
                                             The best offer based on validity:
                                         </h4>
@@ -2139,25 +2908,31 @@ onUnmounted(() => {
                                                     insightFilteredPackages,
                                                 )"
                                                 :key="insight.label"
-                                                class="flex items-center gap-3 text-gray-200"
+                                                class="flex items-center gap-3 text-slate-700"
                                             >
                                                 <div
-                                                    class="w-1.5 h-1.5 rounded-full bg-blue-400 shadow-[0_0_8px_rgba(96,165,250,0.8)]"
+                                                    class="w-1.5 h-1.5 rounded-full"
+                                                    :style="{ backgroundColor: getProviderColor(insight.provider), boxShadow: `0 0 8px ${getProviderColor(insight.provider)}` }"
                                                 ></div>
                                                 <span
-                                                    class="w-20 font-medium text-gray-400"
+                                                    class="w-20 font-medium text-slate-600"
                                                     >{{ insight.label }}</span
                                                 >
-                                                <span class="text-gray-600"
+                                                <span class="text-slate-400"
                                                     >:</span
                                                 >
                                                 <span
-                                                    class="font-bold text-white tracking-wide"
+                                                    class="font-bold text-slate-900 tracking-wide"
                                                     >{{ insight.gb }}GB
                                                     {{ insight.price }}K</span
                                                 >
                                                 <span
-                                                    class="text-blue-300 bg-blue-900/30 px-2 py-0.5 rounded text-xs font-semibold border border-blue-800/50"
+                                                    class="px-2 py-0.5 rounded text-xs font-bold border shadow-xs"
+                                                    :style="{ 
+                                                        color: '#ffffff',
+                                                        backgroundColor: getProviderColor(insight.provider),
+                                                        borderColor: getProviderColor(insight.provider)
+                                                    }"
                                                     >({{
                                                         insight.provider
                                                     }})</span
@@ -2169,7 +2944,7 @@ onUnmounted(() => {
                                                         insightFilteredPackages,
                                                     ).length === 0
                                                 "
-                                                class="text-gray-500 italic text-xs"
+                                                class="text-slate-400 italic text-xs"
                                             >
                                                 Memproses data...
                                             </li>
@@ -2178,7 +2953,7 @@ onUnmounted(() => {
 
                                     <div>
                                         <h4
-                                            class="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-4 border-b border-gray-800 pb-2"
+                                            class="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4 border-b border-slate-200 pb-2"
                                         >
                                             The best offer monthly pack:
                                         </h4>
@@ -2188,25 +2963,31 @@ onUnmounted(() => {
                                                     insightFilteredPackages,
                                                 )"
                                                 :key="insight.label"
-                                                class="flex items-center gap-3 text-gray-200"
+                                                class="flex items-center gap-3 text-slate-700"
                                             >
                                                 <div
-                                                    class="w-1.5 h-1.5 rounded-full bg-purple-400 shadow-[0_0_8px_rgba(192,132,252,0.8)]"
+                                                    class="w-1.5 h-1.5 rounded-full"
+                                                    :style="{ backgroundColor: getProviderColor(insight.provider), boxShadow: `0 0 8px ${getProviderColor(insight.provider)}` }"
                                                 ></div>
                                                 <span
-                                                    class="w-24 font-medium text-gray-400"
+                                                    class="w-24 font-medium text-slate-600"
                                                     >{{ insight.label }}</span
                                                 >
-                                                <span class="text-gray-600"
+                                                <span class="text-slate-400"
                                                     >:</span
                                                 >
                                                 <span
-                                                    class="font-bold text-white tracking-wide"
+                                                    class="font-bold text-slate-900 tracking-wide"
                                                     >{{ insight.gb }}GB
                                                     {{ insight.price }}K</span
                                                 >
                                                 <span
-                                                    class="text-purple-300 bg-purple-900/30 px-2 py-0.5 rounded text-xs font-semibold border border-purple-800/50"
+                                                    class="px-2 py-0.5 rounded text-xs font-bold border shadow-xs"
+                                                    :style="{ 
+                                                        color: '#ffffff',
+                                                        backgroundColor: getProviderColor(insight.provider),
+                                                        borderColor: getProviderColor(insight.provider)
+                                                    }"
                                                     >({{
                                                         insight.provider
                                                     }})</span
@@ -2218,7 +2999,7 @@ onUnmounted(() => {
                                                         insightFilteredPackages,
                                                     ).length === 0
                                                 "
-                                                class="text-gray-500 italic text-xs"
+                                                class="text-slate-400 italic text-xs"
                                             >
                                                 Memproses data...
                                             </li>
@@ -2227,8 +3008,34 @@ onUnmounted(() => {
                                 </div>
                                 
                                 <!-- Market Summarize Tabbed View -->
-                                <div class="mt-8 pt-8 border-t border-gray-800">
-                                    <h4 class="text-sm font-bold text-white uppercase tracking-wider mb-6">Market Summarize</h4>
+                                <div class="mt-8 pt-8 border-t border-slate-200">
+                                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
+                                        <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Market Summarize</h4>
+                                        <div class="flex flex-col sm:flex-row items-end sm:items-center gap-3">
+                                            <div class="flex items-center gap-3">
+                                                <div v-if="insightTimeFilter === 'Rentang Waktu'" class="flex items-center gap-2">
+                                                    <input type="date" v-model="insightStartDate" class="bg-white text-sm text-slate-800 border border-slate-300 rounded-md px-3 py-1.5 focus:outline-none focus:border-indigo-500 shadow-sm" />
+                                                    <span class="text-slate-400">-</span>
+                                                    <input type="date" v-model="insightEndDate" class="bg-white text-sm text-slate-800 border border-slate-300 rounded-md px-3 py-1.5 focus:outline-none focus:border-indigo-500 shadow-sm" />
+                                                </div>
+                                                <select v-model="insightTimeFilter" class="bg-white text-sm text-slate-800 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 shadow-sm">
+                                                    <option>Semua Waktu</option>
+                                                    <option>Hari Ini</option>
+                                                    <option>Minggu Ini</option>
+                                                    <option>Bulan Ini</option>
+                                                    <option>Tahun Ini</option>
+                                                    <option value="Rentang Waktu">Pilih Tanggal / Rentang</option>
+                                                </select>
+                                            </div>
+                                            <select v-model="marketSummaryFilter" class="bg-white border border-slate-300 text-slate-800 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block px-3 py-1.5 outline-none shadow-sm">
+                                                <option value="all">Keseluruhan</option>
+                                                <option value="harian">Paket Harian (Sachet)</option>
+                                                <option value="mingguan">Paket Mingguan</option>
+                                                <option value="bulanan_sachet">Paket Bulanan (Sachet)</option>
+                                                <option value="bulanan_premium">Paket Bulanan (Premium / Jumbo)</option>
+                                            </select>
+                                        </div>
+                                    </div>
                                     
                                     <div class="flex flex-col gap-6">
                                         <!-- Metric Selection Tabs -->
@@ -2236,9 +3043,9 @@ onUnmounted(() => {
                                             <!-- Average Yield Tab -->
                                             <button @click="activeSummaryTab = 'yield'" 
                                                 class="w-full text-left p-4 rounded-xl border transition-all duration-300"
-                                                :class="activeSummaryTab === 'yield' ? 'bg-blue-900/30 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'bg-[#252528]/50 border-gray-800 hover:border-gray-600'">
-                                                <div class="text-xs text-gray-400 mb-1">Average Yield</div>
-                                                <div class="font-bold text-white flex items-center gap-2" v-if="marketAverages.yield">
+                                                :class="activeSummaryTab === 'yield' ? 'bg-blue-50/90 border-blue-500 shadow-sm ring-1 ring-blue-500' : 'bg-slate-50/80 border-slate-200 hover:bg-slate-100 hover:border-slate-300'">
+                                                <div class="text-xs text-slate-500 mb-1">Average Yield</div>
+                                                <div class="font-bold text-slate-800 flex items-center gap-2" v-if="marketAverages.yield">
                                                     🥇 {{ marketAverages.yield.provider }} : {{ marketAverages.yield.value }}
                                                 </div>
                                             </button>
@@ -2246,9 +3053,9 @@ onUnmounted(() => {
                                             <!-- Average Price Tab -->
                                             <button @click="activeSummaryTab = 'price'" 
                                                 class="w-full text-left p-4 rounded-xl border transition-all duration-300"
-                                                :class="activeSummaryTab === 'price' ? 'bg-blue-900/30 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'bg-[#252528]/50 border-gray-800 hover:border-gray-600'">
-                                                <div class="text-xs text-gray-400 mb-1">Average Price</div>
-                                                <div class="font-bold text-white flex items-center gap-2" v-if="marketAverages.price">
+                                                :class="activeSummaryTab === 'price' ? 'bg-blue-50/90 border-blue-500 shadow-sm ring-1 ring-blue-500' : 'bg-slate-50/80 border-slate-200 hover:bg-slate-100 hover:border-slate-300'">
+                                                <div class="text-xs text-slate-500 mb-1">Average Price</div>
+                                                <div class="font-bold text-slate-800 flex items-center gap-2" v-if="marketAverages.price">
                                                     🥇 {{ marketAverages.price.provider }} : {{ marketAverages.price.value }}
                                                 </div>
                                             </button>
@@ -2256,9 +3063,9 @@ onUnmounted(() => {
                                             <!-- Average Data Quota Tab -->
                                             <button @click="activeSummaryTab = 'quota'" 
                                                 class="w-full text-left p-4 rounded-xl border transition-all duration-300"
-                                                :class="activeSummaryTab === 'quota' ? 'bg-blue-900/30 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'bg-[#252528]/50 border-gray-800 hover:border-gray-600'">
-                                                <div class="text-xs text-gray-400 mb-1">Average Data Quota</div>
-                                                <div class="font-bold text-white flex items-center gap-2" v-if="marketAverages.quota">
+                                                :class="activeSummaryTab === 'quota' ? 'bg-blue-50/90 border-blue-500 shadow-sm ring-1 ring-blue-500' : 'bg-slate-50/80 border-slate-200 hover:bg-slate-100 hover:border-slate-300'">
+                                                <div class="text-xs text-slate-500 mb-1">Average Data Quota</div>
+                                                <div class="font-bold text-slate-800 flex items-center gap-2" v-if="marketAverages.quota">
                                                     🥇 {{ marketAverages.quota.provider }} : {{ marketAverages.quota.value }}
                                                 </div>
                                             </button>
@@ -2266,100 +3073,333 @@ onUnmounted(() => {
                                             <!-- Average Validity Tab -->
                                             <button @click="activeSummaryTab = 'validity'" 
                                                 class="w-full text-left p-4 rounded-xl border transition-all duration-300"
-                                                :class="activeSummaryTab === 'validity' ? 'bg-blue-900/30 border-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.15)]' : 'bg-[#252528]/50 border-gray-800 hover:border-gray-600'">
-                                                <div class="text-xs text-gray-400 mb-1">Average Validity</div>
-                                                <div class="font-bold text-white flex items-center gap-2" v-if="marketAverages.validity">
+                                                :class="activeSummaryTab === 'validity' ? 'bg-blue-50/90 border-blue-500 shadow-sm ring-1 ring-blue-500' : 'bg-slate-50/80 border-slate-200 hover:bg-slate-100 hover:border-slate-300'">
+                                                <div class="text-xs text-slate-500 mb-1">Average Validity</div>
+                                                <div class="font-bold text-slate-800 flex items-center gap-2" v-if="marketAverages.validity">
                                                     🥇 {{ marketAverages.validity.provider }} : {{ marketAverages.validity.value }}
                                                 </div>
                                             </button>
                                         </div>
 
                                         <!-- Ranking Table -->
-                                        <div class="bg-[#252528]/50 rounded-xl p-6 border border-gray-800 shadow-inner">
-                                            <h4 class="text-sm font-semibold text-gray-200 uppercase tracking-wider mb-6 border-b border-gray-800 pb-3 flex items-center gap-2">
+                                        <div class="bg-transparent mt-4 relative">
+                                            <h4 class="text-sm font-semibold text-slate-700 uppercase tracking-wider mb-6 pb-2 border-b border-slate-200 flex items-center gap-2">
                                                 Provider Ranking by 
-                                                <span v-if="activeSummaryTab === 'yield'" class="text-blue-400">Average Yield</span>
-                                                <span v-else-if="activeSummaryTab === 'price'" class="text-blue-400">Average Price</span>
-                                                <span v-else-if="activeSummaryTab === 'quota'" class="text-blue-400">Average Data Quota</span>
-                                                <span v-else-if="activeSummaryTab === 'validity'" class="text-blue-400">Average Validity</span>
+                                                <span v-if="activeSummaryTab === 'yield'" class="text-blue-600 font-bold">Average Yield</span>
+                                                <span v-else-if="activeSummaryTab === 'price'" class="text-blue-600 font-bold">Average Price</span>
+                                                <span v-else-if="activeSummaryTab === 'quota'" class="text-blue-600 font-bold">Average Data Quota</span>
+                                                <span v-else-if="activeSummaryTab === 'validity'" class="text-blue-600 font-bold">Average Validity</span>
                                             </h4>
                                             
-                                            <div class="space-y-4" v-if="marketAverages[activeSummaryTab]">
-                                                <div v-for="(item, index) in marketAverages[activeSummaryTab].list" :key="item.provider" class="flex items-center gap-4 group">
-                                                    <div class="w-8 font-bold text-sm text-center flex-shrink-0" 
-                                                         :class="index === 0 ? 'text-yellow-500' : index === 1 ? 'text-gray-300' : index === 2 ? 'text-amber-600' : 'text-gray-600'">
-                                                        #{{ index + 1 }}
-                                                    </div>
-                                                    <span class="w-28 font-bold text-gray-300 flex-shrink-0 group-hover:text-white transition-colors relative cursor-help">
-                                                        {{ item.provider }}
-                                                        
-                                                        <!-- Tooltip Popup -->
-                                                        <div class="absolute left-0 bottom-full mb-2 w-64 bg-[#161618] border border-gray-700 rounded-lg p-3 shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-300 z-50 transform translate-y-2 group-hover:translate-y-0">
-                                                            <div class="text-[11px] text-gray-400 font-normal space-y-1.5">
-                                                                <div class="border-b border-gray-700 pb-1.5 mb-1.5 font-bold text-white uppercase text-xs">{{ item.provider }} Details</div>
-                                                                <div class="flex justify-between"><span>Jumlah Paket:</span> <span class="text-white font-medium">{{ item.count }} paket</span></div>
-                                                                
-                                                                <div v-if="activeSummaryTab === 'quota'" class="space-y-1.5">
-                                                                    <div class="flex justify-between"><span>Total Quota (Semua Paket):</span> <span class="text-white font-medium">{{ formatNumber(item.sumGb, 1) }} GB</span></div>
-                                                                    <div class="mt-2 pt-1 border-t border-gray-700/50">
-                                                                        <div class="text-green-400 font-medium">Tertinggi: <span class="text-white">{{ formatNumber(item.details.quota.max.gb, 1) }} GB</span></div>
-                                                                        <div class="text-gray-500 line-clamp-1">{{ item.details.quota.max.package_name }}</div>
-                                                                    </div>
-                                                                    <div class="mt-1">
-                                                                        <div class="text-red-400 font-medium">Terendah: <span class="text-white">{{ formatNumber(item.details.quota.min.gb, 1) }} GB</span></div>
-                                                                        <div class="text-gray-500 line-clamp-1">{{ item.details.quota.min.package_name }}</div>
-                                                                    </div>
-                                                                </div>
-                                                                
-                                                                <div v-else-if="activeSummaryTab === 'price'" class="space-y-1.5">
-                                                                    <div class="flex justify-between"><span>Total Harga Keseluruhan:</span> <span class="text-white font-medium">Rp{{ formatNumber(item.sumPrice, 0) }}</span></div>
-                                                                    <div class="mt-2 pt-1 border-t border-gray-700/50">
-                                                                        <div class="text-red-400 font-medium">Termahal: <span class="text-white">Rp{{ formatNumber(item.details.price.max.price, 0) }}</span></div>
-                                                                        <div class="text-gray-500 line-clamp-1">{{ item.details.price.max.package_name }}</div>
-                                                                    </div>
-                                                                    <div class="mt-1">
-                                                                        <div class="text-green-400 font-medium">Termurah: <span class="text-white">Rp{{ formatNumber(item.details.price.min.price, 0) }}</span></div>
-                                                                        <div class="text-gray-500 line-clamp-1">{{ item.details.price.min.package_name }}</div>
-                                                                    </div>
-                                                                </div>
-                                                                
-                                                                <div v-else-if="activeSummaryTab === 'yield'" class="space-y-1.5">
-                                                                    <div class="mt-2 pt-1 border-t border-gray-700/50">
-                                                                        <div class="text-green-400 font-medium">Yield Terbaik (Terendah): <span class="text-white">Rp{{ formatNumber(item.details.yield.min.yield_val, 0) }}/GB</span></div>
-                                                                        <div class="text-gray-500 line-clamp-1">{{ item.details.yield.min.package_name }}</div>
-                                                                    </div>
-                                                                    <div class="mt-1">
-                                                                        <div class="text-red-400 font-medium">Yield Terburuk: <span class="text-white">Rp{{ formatNumber(item.details.yield.max.yield_val, 0) }}/GB</span></div>
-                                                                        <div class="text-gray-500 line-clamp-1">{{ item.details.yield.max.package_name }}</div>
-                                                                    </div>
-                                                                </div>
-                                                                
-                                                                <div v-else-if="activeSummaryTab === 'validity'" class="space-y-1.5">
-                                                                    <div class="mt-2 pt-1 border-t border-gray-700/50">
-                                                                        <div class="text-green-400 font-medium">Terlama: <span class="text-white">{{ item.details.validity.max.days }} Hari</span></div>
-                                                                        <div class="text-gray-500 line-clamp-1">{{ item.details.validity.max.package_name }}</div>
-                                                                    </div>
-                                                                    <div class="mt-1">
-                                                                        <div class="text-red-400 font-medium">Tersingkat: <span class="text-white">{{ item.details.validity.min.days }} Hari</span></div>
-                                                                        <div class="text-gray-500 line-clamp-1">{{ item.details.validity.min.package_name }}</div>
-                                                                    </div>
-                                                                </div>
-                                                                
-                                                            </div>
+                                            <div class="relative pb-8 pt-2" v-if="marketAverages[activeSummaryTab]">
+                                                <div class="space-y-4 relative w-full pr-4">
+                                                    <!-- Continuous Y-Axis Line -->
+                                                    <div class="absolute top-0 -bottom-2 left-[8rem] w-[2px] bg-slate-300 z-0"></div>
+                                                    <div v-for="(item, index) in marketAverages[activeSummaryTab].list" :key="item.provider" class="flex items-center group w-full">
+                                                        <div class="w-8 font-bold text-sm text-center flex-shrink-0" :class="index === 0 ? 'text-yellow-500' : index === 1 ? 'text-slate-500' : index === 2 ? 'text-amber-600' : 'text-slate-400'">
+                                                            #{{ index + 1 }}
                                                         </div>
-                                                    </span>
-                                                    
-                                                    <!-- Standard Bar Chart instead of progress bar -->
-                                                    <div class="flex-1 flex items-center h-6">
-                                                        <div class="h-full bg-gradient-to-r from-blue-600 to-indigo-600 rounded-r-md transition-all duration-1000 shadow-sm" :style="{ width: Math.max(item.percent, 1) + '%' }"></div>
+                                                        <span class="w-24 pr-4 font-bold flex-shrink-0 text-sm text-right text-slate-700 relative cursor-help">
+                                                            {{ item.provider }}
+                                                            <!-- Tooltip Popup -->
+                                                            <div class="absolute left-0 bottom-full mb-2 w-64 bg-slate-900 border border-slate-700 text-white rounded-lg p-3 shadow-2xl opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-300 z-50 transform translate-y-2 group-hover:translate-y-0 text-left">
+                                                                <div class="text-[11px] text-slate-300 font-normal space-y-1.5">
+                                                                    <div class="border-b border-slate-700 pb-1.5 mb-1.5 font-bold text-white uppercase text-xs">{{ item.provider }} Details</div>
+                                                                    <div class="flex justify-between"><span>Jumlah Paket:</span> <span class="text-white font-medium">{{ item.count }} paket</span></div>
+                                                                    
+                                                                    <div v-if="activeSummaryTab === 'quota'" class="space-y-1.5">
+                                                                        <div class="flex justify-between"><span>Total Quota (Semua Paket):</span> <span class="text-white font-medium">{{ formatNumber(item.sumGb, 1) }} GB</span></div>
+                                                                        <div class="mt-2 pt-1 border-t border-slate-700/50">
+                                                                            <div class="text-green-400 font-medium">Tertinggi: <span class="text-white">{{ formatNumber(item.details.quota.max.gb, 1) }} GB</span></div>
+                                                                            <div class="text-slate-400 line-clamp-1">{{ item.details.quota.max.package_name }} <span class="text-slate-400">({{ item.details.quota.max.gb }}GB, {{ item.details.quota.max.days }} Hari)</span></div>
+                                                                        </div>
+                                                                        <div class="mt-1">
+                                                                            <div class="text-red-400 font-medium">Terendah: <span class="text-white">{{ formatNumber(item.details.quota.min.gb, 1) }} GB</span></div>
+                                                                            <div class="text-slate-400 line-clamp-1">{{ item.details.quota.min.package_name }} <span class="text-slate-400">({{ item.details.quota.min.gb }}GB, {{ item.details.quota.min.days }} Hari)</span></div>
+                                                                        </div>
+                                                                    </div>
+                                                                    
+                                                                    <div v-else-if="activeSummaryTab === 'price'" class="space-y-1.5">
+                                                                        <div class="flex justify-between"><span>Total Harga Keseluruhan:</span> <span class="text-white font-medium">Rp{{ formatNumber(item.sumPrice, 0) }}</span></div>
+                                                                        <div class="mt-2 pt-1 border-t border-slate-700/50">
+                                                                            <div class="text-red-400 font-medium">Termahal: <span class="text-white">Rp{{ formatNumber(item.details.price.max.price, 0) }}</span></div>
+                                                                            <div class="text-slate-400 line-clamp-1">{{ item.details.price.max.package_name }} <span class="text-slate-400">({{ item.details.price.max.gb }}GB, {{ item.details.price.max.days }} Hari)</span></div>
+                                                                        </div>
+                                                                        <div class="mt-1">
+                                                                            <div class="text-green-400 font-medium">Termurah: <span class="text-white">Rp{{ formatNumber(item.details.price.min.price, 0) }}</span></div>
+                                                                            <div class="text-slate-400 line-clamp-1">{{ item.details.price.min.package_name }} <span class="text-slate-400">({{ item.details.price.min.gb }}GB, {{ item.details.price.min.days }} Hari)</span></div>
+                                                                        </div>
+                                                                    </div>
+                                                                    
+                                                                    <div v-else-if="activeSummaryTab === 'yield'" class="space-y-1.5">
+                                                                        <div class="mt-2 pt-1 border-t border-slate-700/50">
+                                                                            <div class="text-green-400 font-medium">Yield Terbaik (Terendah): <span class="text-white">Rp{{ formatNumber(item.details.yield.min.yield_val, 0) }}/GB</span></div>
+                                                                            <div class="text-slate-400 line-clamp-1">{{ item.details.yield.min.package_name }} <span class="text-slate-400">({{ item.details.yield.min.gb }}GB, {{ item.details.yield.min.days }} Hari)</span></div>
+                                                                        </div>
+                                                                        <div class="mt-1">
+                                                                            <div class="text-red-400 font-medium">Yield Terburuk: <span class="text-white">Rp{{ formatNumber(item.details.yield.max.yield_val, 0) }}/GB</span></div>
+                                                                            <div class="text-slate-400 line-clamp-1">{{ item.details.yield.max.package_name }} <span class="text-slate-400">({{ item.details.yield.max.gb }}GB, {{ item.details.yield.max.days }} Hari)</span></div>
+                                                                        </div>
+                                                                    </div>
+                                                                    
+                                                                    <div v-else-if="activeSummaryTab === 'validity'" class="space-y-1.5">
+                                                                        <div class="mt-2 pt-1 border-t border-slate-700/50">
+                                                                            <div class="text-green-400 font-medium">Terlama: <span class="text-white">{{ item.details.validity.max.days }} Hari</span></div>
+                                                                            <div class="text-slate-400 line-clamp-1">{{ item.details.validity.max.package_name }} <span class="text-slate-400">({{ item.details.validity.max.gb }}GB)</span></div>
+                                                                        </div>
+                                                                        <div class="mt-1">
+                                                                            <div class="text-red-400 font-medium">Tersingkat: <span class="text-white">{{ item.details.validity.min.days }} Hari</span></div>
+                                                                            <div class="text-slate-400 line-clamp-1">{{ item.details.validity.min.package_name }} <span class="text-slate-400">({{ item.details.validity.min.gb }}GB)</span></div>
+                                                                        </div>
+                                                                    </div>
+                                                                    
+                                                                </div>
+                                                            </div>
+                                                        </span>
+                                                        
+                                                        <!-- Flat Bar Chart -->
+                                                        <div class="flex-1 flex items-center h-4 relative z-10 group-hover:opacity-90">
+                                                            <div class="h-full transition-all duration-1000 rounded-r shadow-sm" :style="{ width: Math.max(item.percent, 1) + '%', backgroundColor: getProviderColor(item.provider) }"></div>
+                                                            <span class="ml-3 font-bold text-slate-700 text-sm whitespace-nowrap">{{ item.value }}</span>
+                                                        </div>
                                                     </div>
-                                                    
-                                                    <span class="w-32 text-right font-bold text-indigo-300 flex-shrink-0">{{ item.value }}</span>
+                                                </div>
+                                                
+                                                <!-- X-Axis Scale Line -->
+                                                <div class="flex items-center group w-full mt-2 pr-4">
+                                                    <div class="w-8 flex-shrink-0"></div>
+                                                    <div class="w-24 pr-4 flex-shrink-0"></div>
+                                                    <div class="flex-1 relative h-6 border-t border-slate-300">
+                                                        <div v-for="tick in marketAverages[activeSummaryTab].axis.ticks" :key="tick" 
+                                                             class="absolute top-0 h-2 border-l border-slate-300"
+                                                             :style="{ left: (tick / marketAverages[activeSummaryTab].axis.maxTick) * 100 + '%' }">
+                                                            <span class="absolute top-full mt-1 -translate-x-1/2 text-[10px] text-slate-500 font-medium whitespace-nowrap">
+                                                                {{ formatNumber(tick, 0) }}
+                                                            </span>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
-                                            <div v-else class="text-gray-500 italic text-sm py-4 text-center">Belum ada data untuk kategori ini.</div>
+                                            <div v-else class="text-slate-400 italic text-sm py-4 text-center">Belum ada data untuk kategori ini.</div>
                                         </div>
                                     </div>
+                                </div>
+                                
+                                <!-- Competitiveness Summarize Section -->
+                                <div class="mt-8 pt-8 border-t border-slate-200" v-if="activeSession.packages && activeSession.packages.length > 0">
+                                <div class="mb-6 border-b border-slate-200 pb-2">
+                                    <h4 class="text-sm font-bold text-slate-800 uppercase tracking-widest">Competitiveness Summarize</h4>
+                                </div>
+                            
+                            <div class="grid grid-cols-1 lg:grid-cols-10 gap-6">
+                                <!-- Competitive Heatmap (Far left, col-span-4) -->
+                                <div class="lg:col-span-4 bg-transparent p-2 flex flex-col relative overflow-hidden">
+                                    <h5 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 text-center">Competitive Heatmap</h5>
+                                    <p class="text-[10px] text-slate-400 text-center mb-4 italic">(By Minimum Yield Rp/GB & Overall Score)</p>
+                                    <div class="flex-grow flex flex-col justify-center">
+                                        <table class="w-full text-left border-collapse">
+                                            <thead>
+                                                <tr>
+                                                    <th class="p-1 border-b border-slate-200 text-slate-500 font-bold text-[10px]">Provider</th>
+                                                    <th v-for="col in competitiveHeatmapData.columns" :key="col.key" class="p-1 border-b border-slate-200 text-center text-slate-500 font-bold text-[10px]">{{ col.label }}</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                <tr v-for="row in competitiveHeatmapData.rows" :key="row.provider" class="border-b border-slate-100 hover:bg-slate-50/80 transition-colors">
+                                                    <td class="p-1 text-xs font-extrabold" :style="{color: getProviderColor(row.provider)}">{{ row.provider }}</td>
+                                                    <td v-for="col in competitiveHeatmapData.columns" :key="col.key" class="p-1 text-center text-sm">
+                                                        <div v-if="row.cells[col.key] === 'green'" class="mx-auto w-3 h-3 rounded-full bg-emerald-500 shadow-xs" title="Strong"></div>
+                                                        <div v-else-if="row.cells[col.key] === 'yellow'" class="mx-auto w-3 h-3 rounded-full bg-amber-500 shadow-xs" title="Competitive"></div>
+                                                        <div v-else-if="row.cells[col.key] === 'red'" class="mx-auto w-3 h-3 rounded-full bg-rose-600 shadow-xs" title="Weak"></div>
+                                                        <div v-else class="mx-auto w-2 h-2 rounded-full bg-slate-300" title="No Product"></div>
+                                                    </td>
+                                                </tr>
+                                            </tbody>
+                                        </table>
+                                        
+                                        <!-- Legend -->
+                                        <div class="mt-4 flex flex-wrap justify-start gap-x-3 gap-y-2 text-[10px] text-slate-600 font-medium">
+                                            <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-emerald-500 shadow-xs"></div> <span>Strong</span></div>
+                                            <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-amber-500 shadow-xs"></div> <span>Competitive</span></div>
+                                            <div class="flex items-center gap-2"><div class="w-3 h-3 rounded-full bg-rose-600 shadow-xs"></div> <span>Weak</span></div>
+                                            <div class="flex items-center gap-2"><div class="w-2 h-2 rounded-full bg-slate-300"></div> <span>No Product</span></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Overall Competitiveness -->
+                                <div class="lg:col-span-3 bg-transparent p-2 flex flex-col relative overflow-hidden">
+                                    <h5 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 text-center">Overall Competitiveness</h5>
+                                    <p class="text-[10px] text-slate-400 text-center mb-4 italic">(By Average Package Efficiency)</p>
+                                    <div class="flex-grow min-h-[200px] relative">
+                                        <Bar v-if="overallCompetitivenessChartData.labels.length" :data="overallCompetitivenessChartData" :options="insightChartOptions" />
+                                        <div v-else class="flex h-full items-center justify-center text-slate-400 text-sm">Tidak ada data</div>
+                                    </div>
+                                </div>
+                                
+                                <!-- Yield Distribution -->
+                                <div class="lg:col-span-3 bg-transparent p-2 flex flex-col relative overflow-hidden">
+                                    <h5 class="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1 text-center">Yield Distribution</h5>
+                                    <p class="text-[10px] text-slate-400 text-center mb-4 italic">(By Maximum Yield Rp/GB)</p>
+                                    <div class="flex-grow min-h-[200px] relative">
+                                        <Bar v-if="yieldDistributionChartData.labels.length" :data="yieldDistributionChartData" :options="insightChartOptions" />
+                                        <div v-else class="flex h-full items-center justify-center text-slate-400 text-sm">Tidak ada data</div>
+                                    </div>
+                                </div>
+                                
+                            </div>
+                        </div>
+
+                        <!-- Competitive Yield Landscape Section -->
+                        <div class="mt-10 pt-8 border-t border-slate-200">
+                        
+                        <!-- Header & Title -->
+                        <div class="mb-6 border-b border-slate-200 pb-4">
+                            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
+                                    <path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z" />
+                                    <path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z" />
+                                </svg>
+                                Competitive Yield Landscape — Circle Java & Market Overview
+                            </h3>
+                            <p class="text-xs text-slate-500 mt-1 font-medium">
+                                Yield = EUP / Total GB (Rp per GB) · dots = individual SKUs (jittered) · dashed line = median across all operators per bucket · click legend to toggle operator
+                            </p>
+                        </div>
+
+                        <!-- Interactive Legend & Median Indicator -->
+                        <div class="flex flex-wrap items-center justify-between gap-4 mb-8 px-4 py-3 bg-slate-50 border border-slate-200/80 rounded-xl shadow-xs">
+                            <div class="flex flex-wrap items-center gap-2.5">
+                                <span class="text-xs font-bold text-slate-700 mr-2">Provider:</span>
+                                <button
+                                    v-for="prov in yieldLandscapeProviders"
+                                    :key="prov"
+                                    @click="toggleYieldProvider(prov)"
+                                    class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 border"
+                                    :class="!yieldLandscapeHiddenProviders.includes(prov)
+                                        ? 'bg-white text-slate-800 border-slate-300 shadow-xs ring-1 ring-slate-200/50'
+                                        : 'bg-slate-200/60 text-slate-400 border-transparent opacity-60 hover:opacity-80'"
+                                >
+                                    <span class="w-2.5 h-2.5 rounded-full shadow-xs" :style="{ backgroundColor: !yieldLandscapeHiddenProviders.includes(prov) ? getProviderColor(prov) : '#94a3b8' }"></span>
+                                    <span>{{ prov }}</span>
+                                </button>
+                            </div>
+                            <div class="flex items-center gap-2.5 text-xs font-extrabold text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-xs">
+                                <span class="inline-block w-6 border-t-2 border-dashed border-slate-500 relative">
+                                    <span class="absolute left-1/2 -top-[4px] -translate-x-1/2 w-2 h-2 bg-slate-700 transform rotate-45 border border-white"></span>
+                                </span>
+                                <span>Median per bucket</span>
+                            </div>
+                        </div>
+
+                        <!-- Chart 1: Monthly (Paket Bulanan) -->
+                        <div class="mb-12">
+                            <div class="mb-4">
+                                <div class="flex items-center gap-2.5">
+                                    <span class="bg-blue-100 text-blue-700 font-extrabold text-[11px] px-2.5 py-0.5 rounded-md tracking-wider border border-blue-200 uppercase shadow-xs">Monthly</span>
+                                    <h4 class="text-base font-extrabold text-slate-800">Paket Bulanan — Yield vs Slab EUP (25K bins)</h4>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1 font-medium">Grouped by end-user price. Lower yield = better Rp/GB (more aggressive pricing).</p>
+                            </div>
+                            <div class="h-[420px] w-full border border-slate-200/80 rounded-xl p-4 bg-white shadow-xs">
+                                <Scatter
+                                    v-if="monthlyYieldChartData.datasets.length > 0"
+                                    :data="monthlyYieldChartData"
+                                    :options="getYieldChartOptions(['0–25K', '25–50K', '50–75K', '75–100K', '100–125K', '125–150K', '150–200K', '200K+'])"
+                                />
+                                <div v-else class="flex h-full items-center justify-center text-slate-400 text-sm italic font-medium">Belum ada data paket bulanan untuk ditampilkan.</div>
+                            </div>
+                        </div>
+
+                        <!-- Chart 2: Sachet / Daily (Paket Harian) -->
+                        <div>
+                            <div class="mb-4">
+                                <div class="flex items-center gap-2.5">
+                                    <span class="bg-amber-100 text-amber-800 font-extrabold text-[11px] px-2.5 py-0.5 rounded-md tracking-wider border border-amber-200 uppercase shadow-xs">Sachet</span>
+                                    <h4 class="text-base font-extrabold text-slate-800">Paket Harian — Yield vs Validity (hari)</h4>
+                                </div>
+                                <p class="text-xs text-slate-500 mt-1 font-medium">Grouped by validity days (1d–19d). Short validity usually carries higher Rp/GB.</p>
+                            </div>
+                            <div class="h-[420px] w-full border border-slate-200/80 rounded-xl p-4 bg-white shadow-xs">
+                                <Scatter
+                                    v-if="sachetYieldChartData.datasets.length > 0"
+                                    :data="sachetYieldChartData"
+                                    :options="getYieldChartOptions(sachetYieldLabels)"
+                                />
+                                <div v-else class="flex h-full items-center justify-center text-slate-400 text-sm italic font-medium">Belum ada data paket harian/sachet untuk ditampilkan.</div>
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+                    </div>
+
+                    <!-- AI Strategic Insight Section -->
+                    <div class="mt-8 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-md mb-8 p-6" v-if="activeSession.packages && activeSession.packages.length > 0">
+                        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                            <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
+                                AI Strategic Insight
+                            </h4>
+                            <button @click="generateAiInsight" :disabled="aiInsightLoading" class="mt-4 sm:mt-0 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs py-2 px-4 rounded-md transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm">
+                                <svg v-if="aiInsightLoading" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                </svg>
+                                <span>{{ aiInsightLoading ? 'Analyzing Market...' : 'Generate AI Strategy' }}</span>
+                            </button>
+                        </div>
+                        <div class="bg-slate-50 rounded-lg p-5 border border-slate-200/80 min-h-[150px] shadow-inner">
+                            <div v-if="aiInsightLoading" class="flex flex-col items-center justify-center h-full text-slate-500 py-10">
+                                <div class="w-12 h-12 rounded-full border-4 border-indigo-500/30 border-t-indigo-500 animate-spin mb-4"></div>
+                                <p class="text-sm font-medium">Menganalisis persaingan provider dan merumuskan saran...</p>
+                            </div>
+                            <div v-else-if="aiInsightData" class="prose prose-sm max-w-none prose-indigo text-slate-700" v-html="parseMarkdown(aiInsightData)"></div>
+                            <div v-else class="flex items-center justify-center h-full text-slate-400 py-10 text-sm italic">
+                                Klik tombol di atas untuk mendapatkan insight pasar dan strategi dari AI.
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Market Trend Section -->
+                        <div class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-md mb-8 p-6">
+                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
+                                <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Market Trend</h4>
+                                
+                                <div class="flex flex-col sm:flex-row gap-3 mt-4 sm:mt-0">
+                                    <select 
+                                        v-model="trendMetric" 
+                                        class="bg-white border border-slate-300 rounded-lg text-sm text-slate-800 py-1.5 px-3 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm"
+                                    >
+                                        <option value="avg_price">Kenaikan/Penurunan Harga</option>
+                                        <option value="avg_yield">Kenaikan/Penurunan Yield</option>
+                                        <option value="count">Jumlah Penambahan Paket</option>
+                                    </select>
+                                    
+                                    <VueDatePicker
+                                        v-model="trendDateRange"
+                                        range
+                                        multi-calendars
+                                        :enable-time-picker="false"
+                                        placeholder="Pilih Rentang Waktu"
+                                        class="w-64"
+                                    />
+                                </div>
+                            </div>
+                            
+                            <div class="w-full h-80 relative">
+                                <div v-if="trendLoading" class="absolute inset-0 flex items-center justify-center bg-white/80 backdrop-blur-sm z-10 rounded-xl">
+                                    <svg class="animate-spin h-8 w-8 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                    </svg>
+                                </div>
+                                <Line v-if="trendChartData.labels.length > 0" :data="trendChartData" :options="trendChartOptions" />
+                                <div v-else-if="!trendLoading" class="flex flex-col items-center justify-center h-full text-slate-400 italic p-4 text-center">
+                                    <p>Belum ada data trend untuk rentang waktu ini.</p>
+                                    <p class="text-xs text-slate-400 mt-2">Debug: Range: {{ trendDateRange ? JSON.stringify(trendDateRange) : 'null' }}</p>
+                                    <p class="text-xs text-slate-400">Labels length: {{ trendRawData?.labels?.length || 0 }}</p>
                                 </div>
                             </div>
                         </div>
@@ -2370,16 +3410,16 @@ onUnmounted(() => {
                                 activeSession.packages &&
                                 activeSession.packages.length > 0
                             "
-                            class="bg-[#1e1e20] border border-gray-800 rounded-2xl overflow-hidden shadow-xl mb-8"
+                            class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-md mb-8"
                         >
                             <div
-                                class="px-6 py-4 border-b border-gray-800 bg-[#252528]/50 flex justify-between items-center"
+                                class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center"
                             >
                                 <h3
-                                    class="font-semibold text-gray-200 flex items-center gap-2"
+                                    class="font-semibold text-slate-800 flex items-center gap-2"
                                 >
                                     <div
-                                        class="w-2 h-2 rounded-full bg-green-500"
+                                        class="w-2 h-2 rounded-full bg-green-500 shadow-xs"
                                     ></div>
                                     Data Berhasil Diekstrak ({{
                                         filteredPackagesList.length
@@ -2388,13 +3428,13 @@ onUnmounted(() => {
                                 <div class="flex items-stretch gap-3">
                                     <div
                                         v-if="activeSession.performance_metrics"
-                                        class="hidden md:flex items-center gap-2 text-[10px] bg-black/30 rounded-lg px-2 py-1 border border-gray-700 my-auto"
+                                        class="hidden md:flex items-center gap-2 text-[10px] bg-slate-100 rounded-lg px-2 py-1 border border-slate-200 my-auto shadow-xs"
                                     >
                                         <span
-                                            class="text-gray-400"
+                                            class="text-slate-600 font-medium"
                                             title="Waktu Ekstraksi Vision AI"
                                             >⏱️ Ekstraksi:
-                                            <span class="text-indigo-300"
+                                            <span class="text-indigo-700 font-bold"
                                                 >{{
                                                     activeSession
                                                         .performance_metrics
@@ -2402,12 +3442,12 @@ onUnmounted(() => {
                                                 }}s</span
                                             ></span
                                         >
-                                        <span class="text-gray-600">|</span>
+                                        <span class="text-slate-300">|</span>
                                         <span
-                                            class="text-gray-400"
+                                            class="text-slate-600 font-medium"
                                             title="Waktu Pembuatan Benchmarking"
                                             >Analisis:
-                                            <span class="text-indigo-300"
+                                            <span class="text-indigo-700 font-bold"
                                                 >{{
                                                     activeSession
                                                         .performance_metrics
@@ -2415,13 +3455,13 @@ onUnmounted(() => {
                                                 }}s</span
                                             ></span
                                         >
-                                        <span class="text-gray-600">|</span>
+                                        <span class="text-slate-300">|</span>
                                         <span
-                                            class="text-gray-400"
+                                            class="text-slate-600 font-medium"
                                             title="Total Waktu"
                                             >Total:
                                             <span
-                                                class="text-blue-400 font-bold"
+                                                class="text-blue-600 font-extrabold"
                                                 >{{
                                                     activeSession
                                                         .performance_metrics
@@ -2435,14 +3475,14 @@ onUnmounted(() => {
                                         v-if="comparisonResults[activeSession.id]"
                                         @click="syncAllCsv(activeSession)"
                                         :disabled="isComparing[activeSession.id]"
-                                        class="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-md text-white transition border border-indigo-500 flex items-center justify-center gap-1 text-center font-medium shadow-lg shadow-indigo-500/20"
+                                        class="text-xs px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 rounded-md text-white transition border border-indigo-500 flex items-center justify-center gap-1 text-center font-medium shadow-sm"
                                         :class="{'opacity-50 cursor-not-allowed': isComparing[activeSession.id]}"
                                     >
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
                                         <span v-if="!isComparing[activeSession.id]">Samakan Semua Data</span>
                                         <span v-else>Memproses...</span>
                                     </button>
-                                    <label class="text-xs px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 rounded-md text-white transition border border-yellow-500 flex items-center justify-center gap-1 text-center font-medium cursor-pointer"
+                                    <label class="text-xs px-3 py-1.5 bg-yellow-600 hover:bg-yellow-500 rounded-md text-white transition border border-yellow-500 flex items-center justify-center gap-1 text-center font-medium cursor-pointer shadow-sm"
                                         :class="{'opacity-50 cursor-not-allowed': isComparing[activeSession.id]}"
                                     >
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -2455,14 +3495,14 @@ onUnmounted(() => {
                                     <button
                                         v-if="comparisonResults[activeSession.id]"
                                         @click="clearFlags(activeSession.id)"
-                                        class="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded-md text-white transition border border-red-500 flex items-center justify-center gap-1 text-center font-medium shadow-lg shadow-red-500/20"
+                                        class="text-xs px-3 py-1.5 bg-red-600 hover:bg-red-500 rounded-md text-white transition border border-red-500 flex items-center justify-center gap-1 text-center font-medium shadow-sm"
                                     >
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                                         Hapus Flag
                                     </button>
                                     <button
                                         @click="isFilterOpen = !isFilterOpen"
-                                        class="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-md text-white transition border border-blue-500 flex items-center justify-center gap-1 text-center font-medium shadow-lg shadow-blue-500/20"
+                                        class="text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-500 rounded-md text-white transition border border-blue-500 flex items-center justify-center gap-1 text-center font-medium shadow-sm"
                                     >
                                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
                                         Filter
@@ -2470,7 +3510,7 @@ onUnmounted(() => {
 
                                     <button
                                         @click="toggleTable(activeSession.id)"
-                                        class="text-xs px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded-md text-gray-300 transition border border-gray-700 flex items-center justify-center h-full text-center"
+                                        class="text-xs px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-md text-slate-700 font-semibold transition border border-slate-300 flex items-center justify-center h-full text-center shadow-xs"
                                     >
                                         {{
                                             activeTables[activeSession.id]
@@ -2483,36 +3523,36 @@ onUnmounted(() => {
 
                             <div
                                         v-show="activeTables[activeSession.id]"
-                                        class="flex flex-col xl:flex-row border-t border-gray-800"
+                                        class="flex flex-col xl:flex-row border-t border-slate-200"
                                     >
                                         <!-- Filter Sidebar -->
-                                        <div v-if="isFilterOpen" class="w-full xl:w-1/4 p-4 bg-[#161618] border-b xl:border-b-0 xl:border-r border-gray-800 overflow-y-auto custom-scrollbar flex-shrink-0">
+                                        <div v-if="isFilterOpen" class="w-full xl:w-1/4 p-4 bg-slate-50 border-b xl:border-b-0 xl:border-r border-slate-200 overflow-y-auto custom-scrollbar flex-shrink-0">
                                             <div class="flex items-center justify-between mb-4">
-                                                <h4 class="text-sm text-gray-200 font-bold flex items-center gap-2">
-                                                    <svg class="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
+                                                <h4 class="text-sm text-slate-800 font-bold flex items-center gap-2">
+                                                    <svg class="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
                                                     Filter Data
                                                 </h4>
-                                                <button @click="resetFilters" class="text-xs text-blue-400 hover:text-blue-300">Reset</button>
+                                                <button @click="resetFilters" class="text-xs text-blue-600 font-bold hover:underline">Reset</button>
                                             </div>
 
                                             <div class="space-y-5">
                                                 <!-- Status Flag -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Status Flag</h5>
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Status Flag</h5>
                                                     <div class="space-y-1">
-                                                        <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-300 hover:text-white">
-                                                            <input type="checkbox" value="price_mismatch" v-model="filters.flags" class="rounded bg-[#1e1e20] border-gray-700 text-blue-500 focus:ring-blue-500/50 cursor-pointer" />
-                                                            <span class="w-2.5 h-2.5 rounded-full bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.6)] inline-block"></span>
+                                                        <label class="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                                                            <input type="checkbox" value="price_mismatch" v-model="filters.flags" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
+                                                            <span class="w-2.5 h-2.5 rounded-full bg-yellow-500 shadow-xs inline-block"></span>
                                                             Harga Berbeda
                                                         </label>
-                                                        <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-300 hover:text-white">
-                                                            <input type="checkbox" value="not_found" v-model="filters.flags" class="rounded bg-[#1e1e20] border-gray-700 text-blue-500 focus:ring-blue-500/50 cursor-pointer" />
-                                                            <span class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)] inline-block"></span>
+                                                        <label class="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                                                            <input type="checkbox" value="not_found" v-model="filters.flags" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
+                                                            <span class="w-2.5 h-2.5 rounded-full bg-red-500 shadow-xs inline-block"></span>
                                                             Tidak Ditemukan
                                                         </label>
-                                                        <label class="flex items-center gap-2 cursor-pointer text-sm text-gray-300 hover:text-white">
-                                                            <input type="checkbox" value="synced" v-model="filters.flags" class="rounded bg-[#1e1e20] border-gray-700 text-blue-500 focus:ring-blue-500/50 cursor-pointer" />
-                                                            <span class="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.6)] inline-block"></span>
+                                                        <label class="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                                                            <input type="checkbox" value="synced" v-model="filters.flags" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
+                                                            <span class="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-xs inline-block"></span>
                                                             Telah Disamakan
                                                         </label>
                                                     </div>
@@ -2520,10 +3560,10 @@ onUnmounted(() => {
 
                                                 <!-- Provider -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Provider</h5>
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Provider</h5>
                                                     <div class="space-y-1">
-                                                        <label v-for="prov in availableProviders" :key="prov" class="flex items-center gap-2 cursor-pointer text-sm text-gray-300 hover:text-white">
-                                                            <input type="checkbox" :value="prov" v-model="filters.providers" class="rounded bg-[#1e1e20] border-gray-700 text-blue-500 focus:ring-blue-500/50 cursor-pointer" />
+                                                        <label v-for="prov in availableProviders" :key="prov" class="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                                                            <input type="checkbox" :value="prov" v-model="filters.providers" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
                                                             {{ prov }}
                                                         </label>
                                                     </div>
@@ -2531,10 +3571,10 @@ onUnmounted(() => {
 
                                                 <!-- Kategori -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Kategori</h5>
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Kategori</h5>
                                                     <div class="space-y-1">
-                                                        <label v-for="cat in availableCategories" :key="cat" class="flex items-center gap-2 cursor-pointer text-sm text-gray-300 hover:text-white">
-                                                            <input type="checkbox" :value="cat" v-model="filters.categories" class="rounded bg-[#1e1e20] border-gray-700 text-blue-500 focus:ring-blue-500/50 cursor-pointer" />
+                                                        <label v-for="cat in availableCategories" :key="cat" class="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                                                            <input type="checkbox" :value="cat" v-model="filters.categories" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
                                                             {{ cat }}
                                                         </label>
                                                     </div>
@@ -2542,53 +3582,53 @@ onUnmounted(() => {
 
                                                 <!-- Nama Paket -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Nama Paket</h5>
-                                                    <input type="text" v-model="filters.search" placeholder="Cari nama paket..." class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-3 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Nama Paket</h5>
+                                                    <input type="text" v-model="filters.search" placeholder="Cari nama paket..." class="w-full bg-white border border-slate-300 rounded px-3 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
                                                 </div>
 
                                                 <!-- Timestamp -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Timestamp</h5>
-                                                    <input type="text" v-model="filters.dateStart" placeholder="Cari timestamp (mis. 2024-07)..." class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-3 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Timestamp</h5>
+                                                    <input type="text" v-model="filters.dateStart" placeholder="Cari timestamp (mis. 2024-07)..." class="w-full bg-white border border-slate-300 rounded px-3 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
                                                 </div>
 
                                                 <!-- Kuota Range -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Range Kuota (GB)</h5>
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Range Kuota (GB)</h5>
                                                     <div class="flex items-center gap-2">
-                                                        <input type="number" v-model="filters.gbMin" placeholder="Min" class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
-                                                        <span class="text-gray-500">-</span>
-                                                        <input type="number" v-model="filters.gbMax" placeholder="Max" class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
+                                                        <input type="number" v-model="filters.gbMin" placeholder="Min" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
+                                                        <span class="text-slate-400">-</span>
+                                                        <input type="number" v-model="filters.gbMax" placeholder="Max" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
                                                     </div>
                                                 </div>
 
                                                 <!-- Harga Range -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Range Harga (Rp)</h5>
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Range Harga (Rp)</h5>
                                                     <div class="flex items-center gap-2">
-                                                        <input type="number" v-model="filters.priceMin" placeholder="Min" class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
-                                                        <span class="text-gray-500">-</span>
-                                                        <input type="number" v-model="filters.priceMax" placeholder="Max" class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
+                                                        <input type="number" v-model="filters.priceMin" placeholder="Min" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
+                                                        <span class="text-slate-400">-</span>
+                                                        <input type="number" v-model="filters.priceMax" placeholder="Max" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
                                                     </div>
                                                 </div>
 
                                                 <!-- Masa Aktif Range -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Masa Aktif (Hari)</h5>
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Masa Aktif (Hari)</h5>
                                                     <div class="flex items-center gap-2">
-                                                        <input type="number" v-model="filters.daysMin" placeholder="Min" class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
-                                                        <span class="text-gray-500">-</span>
-                                                        <input type="number" v-model="filters.daysMax" placeholder="Max" class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
+                                                        <input type="number" v-model="filters.daysMin" placeholder="Min" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
+                                                        <span class="text-slate-400">-</span>
+                                                        <input type="number" v-model="filters.daysMax" placeholder="Max" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
                                                     </div>
                                                 </div>
 
                                                 <!-- Yield Range -->
                                                 <div>
-                                                    <h5 class="text-xs font-semibold text-gray-400 mb-2">Range Yield (Rp/GB)</h5>
+                                                    <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Range Yield (Rp/GB)</h5>
                                                     <div class="flex items-center gap-2">
-                                                        <input type="number" v-model="filters.yieldMin" placeholder="Min" class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
-                                                        <span class="text-gray-500">-</span>
-                                                        <input type="number" v-model="filters.yieldMax" placeholder="Max" class="w-full bg-[#1a1a1c] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none placeholder-gray-600" />
+                                                        <input type="number" v-model="filters.yieldMin" placeholder="Min" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
+                                                        <span class="text-slate-400">-</span>
+                                                        <input type="number" v-model="filters.yieldMax" placeholder="Max" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
                                                     </div>
                                                 </div>
                                             </div>
@@ -2597,10 +3637,10 @@ onUnmounted(() => {
                                 <!-- LEFT: Source Images (Only show when editing for easier crosscheck) -->
                                 <div
                                     v-if="isEditingTable[activeSession.id]"
-                                    class="w-full xl:w-1/3 p-4 bg-[#161618] border-b xl:border-b-0 xl:border-r border-gray-800 max-h-[600px] overflow-y-auto custom-scrollbar"
+                                    class="w-full xl:w-1/3 p-4 bg-slate-50 border-b xl:border-b-0 xl:border-r border-slate-200 max-h-[600px] overflow-y-auto custom-scrollbar"
                                 >
                                     <h4
-                                        class="text-xs text-gray-400 font-semibold mb-4 uppercase tracking-wider sticky top-0 bg-[#161618] py-2"
+                                        class="text-xs text-slate-700 font-bold mb-4 uppercase tracking-wider sticky top-0 bg-slate-50 py-2 z-10"
                                     >
                                         Gambar Sumber Asli
                                     </h4>
@@ -2628,16 +3668,16 @@ onUnmounted(() => {
                                                             )
                                                         "
                                                         :src="'/storage/' + att"
-                                                        class="rounded-lg border border-gray-700 hover:border-blue-500 transition cursor-zoom-in w-full object-contain bg-black shadow-lg"
+                                                        class="rounded-lg border border-slate-200 hover:border-blue-500 transition cursor-zoom-in w-full object-contain bg-white shadow-sm"
                                                         @click="openImage(att)"
                                                         title="Klik untuk memperbesar"
                                                     />
                                                     <div
                                                         v-else
-                                                        class="text-xs text-gray-400 p-2 bg-gray-800 rounded border border-gray-700 break-all flex items-center gap-2"
+                                                        class="text-xs text-slate-700 font-medium p-2 bg-white rounded border border-slate-200 shadow-sm break-all flex items-center gap-2"
                                                     >
                                                         <svg
-                                                            class="w-4 h-4 shrink-0 text-blue-400"
+                                                            class="w-4 h-4 shrink-0 text-blue-600"
                                                             fill="none"
                                                             stroke="currentColor"
                                                             viewBox="0 0 24 24"
@@ -2668,10 +3708,10 @@ onUnmounted(() => {
                                     ]"
                                 >
                                     <table
-                                        class="w-full text-sm text-left text-gray-300"
+                                        class="w-full text-sm text-left text-slate-700"
                                     >
                                         <thead
-                                            class="text-xs text-gray-400 uppercase bg-[#1a1a1c] border-b border-gray-800"
+                                            class="text-xs text-slate-600 uppercase bg-slate-50 border-b border-slate-200 font-bold"
                                         >
                                             <tr>
                                                 <th class="px-4 py-3">
@@ -2742,14 +3782,14 @@ onUnmounted(() => {
                                             <tr
                                                 v-for="pkg in filteredPackagesList"
                                                 :key="pkg.id"
-                                                class="border-b border-gray-800 transition-colors cursor-pointer hover:bg-[#333336]"
+                                                class="border-b border-slate-100 transition-colors cursor-pointer hover:bg-slate-50/80"
                                                 @click="openEditModal(pkg, activeSession.id)"
                                             >
-                                                <td class="px-4 py-3 text-gray-300 text-xs truncate max-w-[150px]" :title="pkg.image_timestamp">
-                                                    {{ pkg.image_timestamp || '-' }}
+                                                <td class="px-4 py-3 text-slate-600 text-xs truncate max-w-[150px]" :title="pkg.image_timestamp || pkg.created_at">
+                                                    {{ pkg.image_timestamp || (pkg.created_at ? pkg.created_at.replace('T', ' ').substring(0, 19) : '-') }}
                                                 </td>
                                                 <td
-                                                    class="px-4 py-3 font-medium text-gray-200 transition-colors"
+                                                    class="px-4 py-3 font-bold text-slate-800 transition-colors"
                                                 >
                                                     <div class="flex items-center gap-2">
                                                         <span>{{ pkg.provider }}</span>
@@ -2760,21 +3800,21 @@ onUnmounted(() => {
                                                         </template>
                                                     </div>
                                                 </td>
-                                                <td class="px-4 py-3 text-gray-300">
+                                                <td class="px-4 py-3 text-slate-700">
                                                     {{ pkg.package_name || '-' }}
                                                 </td>
                                                 <td
-                                                    class="px-4 py-3 text-right font-medium text-blue-400"
+                                                    class="px-4 py-3 text-right font-bold text-blue-600"
                                                 >
                                                     {{ pkg.gb }} GB
                                                 </td>
                                                 <td
-                                                    class="px-4 py-3 text-right text-gray-400"
+                                                    class="px-4 py-3 text-right text-slate-600"
                                                 >
                                                     {{ pkg.days }} Hari
                                                 </td>
                                                 <td
-                                                    class="px-4 py-3 text-right text-gray-300"
+                                                    class="px-4 py-3 text-right text-slate-800 font-medium"
                                                 >
                                                     Rp
                                                     {{
@@ -2786,10 +3826,10 @@ onUnmounted(() => {
                                                     }}
                                                 </td>
                                                 <td
-                                                    class="px-4 py-3 text-gray-400"
+                                                    class="px-4 py-3 text-slate-600"
                                                 >
                                                     <span
-                                                        class="px-2.5 py-1 bg-gray-800 rounded-full text-[10px] border border-gray-700"
+                                                        class="px-2.5 py-1 bg-slate-100 rounded-full text-[10px] font-bold text-slate-700 border border-slate-200 shadow-xs"
                                                         >{{
                                                             pkg.category
                                                         }}</span
@@ -2798,15 +3838,15 @@ onUnmounted(() => {
                                                 <td
                                                     class="px-4 py-3 text-right font-bold text-xs"
                                                     :class="{
-                                                        'text-green-400':
+                                                        'text-emerald-600 font-extrabold':
                                                             pkg.yield_val <
                                                             3000,
-                                                        'text-yellow-400':
+                                                        'text-amber-600 font-extrabold':
                                                             pkg.yield_val >=
                                                                 3000 &&
                                                             pkg.yield_val <=
                                                                 5000,
-                                                        'text-red-400':
+                                                        'text-rose-600 font-extrabold':
                                                             pkg.yield_val >
                                                             5000,
                                                     }"
@@ -2832,16 +3872,16 @@ onUnmounted(() => {
                                                     activeSession.id
                                                 ]"
                                                 :key="idx"
-                                                class="border-b border-gray-800 bg-[#1e1e20] hover:bg-[#252528]"
+                                                class="border-b border-slate-200 bg-slate-50 hover:bg-slate-100/60"
                                             >
                                                 <td class="px-2 py-2">
-                                                    <div class="text-xs text-gray-500 truncate max-w-[100px]" :title="pkg.image_timestamp">{{ pkg.image_timestamp || '-' }}</div>
+                                                    <div class="text-xs text-slate-500 truncate max-w-[100px]" :title="pkg.image_timestamp">{{ pkg.image_timestamp || '-' }}</div>
                                                 </td>
                                                 <td class="px-2 py-2">
                                                     <input
                                                         type="text"
                                                         v-model="pkg.provider"
-                                                        class="w-full bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
+                                                        class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none shadow-sm"
                                                     />
                                                 </td>
                                                 <td class="px-2 py-2">
@@ -2849,7 +3889,7 @@ onUnmounted(() => {
                                                         type="text"
                                                         v-model="pkg.package_name"
                                                         placeholder="Nama (opsional)"
-                                                        class="w-full bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none"
+                                                        class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none shadow-sm"
                                                     />
                                                 </td>
                                                 <td
@@ -2859,7 +3899,7 @@ onUnmounted(() => {
                                                         type="number"
                                                         step="0.1"
                                                         v-model="pkg.gb"
-                                                        class="w-full max-w-[80px] bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none text-right"
+                                                        class="w-full max-w-[80px] bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none text-right shadow-sm"
                                                     />
                                                 </td>
                                                 <td
@@ -2868,7 +3908,7 @@ onUnmounted(() => {
                                                     <input
                                                         type="number"
                                                         v-model="pkg.days"
-                                                        class="w-full max-w-[80px] bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none text-right"
+                                                        class="w-full max-w-[80px] bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none text-right shadow-sm"
                                                     />
                                                 </td>
                                                 <td
@@ -2877,7 +3917,7 @@ onUnmounted(() => {
                                                     <input
                                                         type="number"
                                                         v-model="pkg.price"
-                                                        class="w-full max-w-[100px] bg-[#131314] border border-gray-700 rounded px-2 py-1.5 text-xs text-white focus:border-blue-500 outline-none text-right"
+                                                        class="w-full max-w-[100px] bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none text-right shadow-sm"
                                                     />
                                                 </td>
                                                 <td
@@ -2893,7 +3933,7 @@ onUnmounted(() => {
                                                                     idx,
                                                                 )
                                                             "
-                                                            class="text-green-400 hover:text-green-300 p-1.5 bg-green-900/30 hover:bg-green-800/50 rounded transition"
+                                                            class="text-green-700 hover:text-green-800 p-1.5 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition shadow-xs"
                                                             title="Sisipkan Baris di Bawah"
                                                         >
                                                             <svg
@@ -2917,7 +3957,7 @@ onUnmounted(() => {
                                                                     idx,
                                                                 )
                                                             "
-                                                            class="text-red-400 hover:text-red-300 p-1.5 bg-red-900/30 hover:bg-red-800/50 rounded transition"
+                                                            class="text-red-700 hover:text-red-800 p-1.5 bg-red-50 hover:bg-red-100 border border-red-200 rounded transition shadow-xs"
                                                             title="Hapus Baris"
                                                         >
                                                             <svg
@@ -2940,7 +3980,7 @@ onUnmounted(() => {
                                             <tr>
                                                 <td
                                                     colspan="5"
-                                                    class="px-4 py-4 bg-[#161618]"
+                                                    class="px-4 py-4 bg-slate-50 border-t border-slate-200"
                                                 >
                                                     <div
                                                         class="flex justify-between items-center"
@@ -2951,7 +3991,7 @@ onUnmounted(() => {
                                                                     activeSession.id,
                                                                 )
                                                             "
-                                                            class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded text-xs text-white transition flex items-center gap-1"
+                                                            class="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded text-xs font-semibold text-slate-700 transition flex items-center gap-1 shadow-sm"
                                                         >
                                                             <svg
                                                                 class="w-4 h-4"
@@ -2974,7 +4014,7 @@ onUnmounted(() => {
                                                                     activeSession.id,
                                                                 )
                                                             "
-                                                            class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white font-medium transition shadow-lg flex items-center gap-2"
+                                                            class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white font-semibold transition shadow-md flex items-center gap-2"
                                                             :disabled="
                                                                 savingTable[
                                                                     activeSession
@@ -3040,12 +4080,12 @@ onUnmounted(() => {
                             >
                                 <div
                                     v-if="msg.chart_config"
-                                    class="bg-[#1e1e20] p-6 rounded-2xl border border-gray-800 shadow-xl flex flex-col h-full"
+                                    class="bg-white p-6 rounded-2xl border border-slate-200 shadow-md flex flex-col h-full"
                                 >
                                     <div class="flex items-center justify-between mb-4">
                                         <div class="flex items-center gap-2">
                                             <svg
-                                                class="w-5 h-5 text-indigo-400"
+                                                class="w-5 h-5 text-indigo-600"
                                                 fill="none"
                                                 stroke="currentColor"
                                                 viewBox="0 0 24 24"
@@ -3057,11 +4097,11 @@ onUnmounted(() => {
                                                     d="M7 12l3-3 3 3 4-4M8 21l4-4 4 4M3 4h18M4 4h16v12a1 1 0 01-1 1H5a1 1 0 01-1-1V4z"
                                                 ></path>
                                             </svg>
-                                            <h3 class="font-semibold text-gray-200">
+                                            <h3 class="font-bold text-slate-800">
                                                 Visualisasi Data
                                             </h3>
                                         </div>
-                                        <button @click="deleteChart(activeSession, msg)" class="text-gray-500 hover:text-red-500 transition-colors p-1 rounded-full hover:bg-gray-700" title="Hapus Grafik">
+                                        <button @click="deleteChart(activeSession, msg)" class="text-slate-400 hover:text-red-600 transition-colors p-1 rounded-full hover:bg-slate-100" title="Hapus Grafik">
                                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
                                         </button>
                                     </div>
@@ -3077,13 +4117,14 @@ onUnmounted(() => {
             </div>
 
             <!-- FLOATING CHAT WIDGET -->
+            <!-- FLOATING CHAT WIDGET -->
             <div
                 class="absolute bottom-6 right-6 z-50 flex flex-col items-end pointer-events-none"
             >
                 <!-- Chat Window Pop-up -->
                 <div
                     v-show="isChatOpen"
-                    class="pointer-events-auto bg-[#1e1e20] w-[400px] max-w-[calc(100vw-3rem)] h-[600px] max-h-[calc(100vh-8rem)] rounded-2xl shadow-[0_10px_50px_rgba(0,0,0,0.5)] border border-gray-700 flex flex-col mb-4 overflow-hidden origin-bottom-right transition-all"
+                    class="pointer-events-auto bg-white w-[400px] max-w-[calc(100vw-3rem)] h-[600px] max-h-[calc(100vh-8rem)] rounded-2xl shadow-[0_10px_50px_rgba(0,0,0,0.15)] border border-slate-200 flex flex-col mb-4 overflow-hidden origin-bottom-right transition-all"
                 >
                     <!-- Chat Header -->
                     <div
@@ -3145,7 +4186,7 @@ onUnmounted(() => {
                     <!-- Chat Body -->
                     <div
                         ref="chatContainer"
-                        class="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-[#131314]"
+                        class="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar bg-slate-50"
                     >
                         <div
                             v-if="
@@ -3155,10 +4196,10 @@ onUnmounted(() => {
                             class="h-full flex flex-col items-center justify-center text-center"
                         >
                             <div
-                                class="w-16 h-16 bg-[#1e1e20] rounded-full flex items-center justify-center mb-4 shadow-inner"
+                                class="w-16 h-16 bg-white border border-slate-200 rounded-full flex items-center justify-center mb-4 shadow-xs"
                             >
                                 <svg
-                                    class="w-8 h-8 text-gray-500"
+                                    class="w-8 h-8 text-slate-400"
                                     fill="none"
                                     stroke="currentColor"
                                     viewBox="0 0 24 24"
@@ -3171,10 +4212,10 @@ onUnmounted(() => {
                                     ></path>
                                 </svg>
                             </div>
-                            <p class="text-sm font-medium text-gray-300">
+                            <p class="text-sm font-bold text-slate-700">
                                 Belum ada percakapan
                             </p>
-                            <p class="text-xs text-gray-500 mt-1 max-w-[200px]">
+                            <p class="text-xs text-slate-500 mt-1 max-w-[200px]">
                                 Mulai obrolan atau unggah pricelist untuk
                                 dianalisis oleh AI.
                             </p>
@@ -3197,7 +4238,7 @@ onUnmounted(() => {
                                     :class="
                                         msg.role === 'user'
                                             ? 'bg-indigo-600'
-                                            : 'bg-gradient-to-br from-blue-500 to-purple-500'
+                                            : 'bg-gradient-to-br from-blue-600 to-purple-600'
                                     "
                                 >
                                     <svg
@@ -3236,7 +4277,7 @@ onUnmounted(() => {
                                     :class="
                                         msg.role === 'user'
                                             ? 'bg-indigo-600 text-white rounded-tr-sm shadow-md'
-                                            : 'bg-[#1e1e20] text-gray-200 rounded-tl-sm border border-gray-800 shadow-sm'
+                                            : 'bg-white text-slate-800 rounded-tl-sm border border-slate-200 shadow-sm'
                                     "
                                 >
                                     <div
@@ -3249,10 +4290,10 @@ onUnmounted(() => {
                                         <div
                                             v-for="attachment in msg.attachments"
                                             :key="attachment"
-                                            class="flex items-center gap-2 bg-black/20 rounded-lg px-2.5 py-1.5 text-xs border border-white/10"
+                                            class="flex items-center gap-2 bg-slate-100 rounded-lg px-2.5 py-1.5 text-xs border border-slate-200 text-slate-700"
                                         >
                                             <svg
-                                                class="w-3.5 h-3.5 text-blue-300"
+                                                class="w-3.5 h-3.5 text-blue-600"
                                                 fill="none"
                                                 stroke="currentColor"
                                                 viewBox="0 0 24 24"
@@ -3264,7 +4305,7 @@ onUnmounted(() => {
                                                     d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"
                                                 ></path>
                                             </svg>
-                                            <span class="truncate">{{
+                                            <span class="truncate font-medium">{{
                                                 attachment.split("/").pop()
                                             }}</span>
                                         </div>
@@ -3273,10 +4314,10 @@ onUnmounted(() => {
                                     <!-- Inform user that chart is on dashboard -->
                                     <div
                                         v-if="msg.chart_config"
-                                        class="text-xs bg-blue-900/20 text-blue-300 border border-blue-900/50 rounded-lg px-3 py-2 mb-2 flex items-center gap-2"
+                                        class="text-xs bg-blue-50 text-blue-700 border border-blue-200 rounded-lg px-3 py-2 mb-2 flex items-center gap-2 font-semibold"
                                     >
                                         <svg
-                                            class="w-4 h-4 shrink-0"
+                                            class="w-4 h-4 shrink-0 text-blue-600"
                                             fill="none"
                                             stroke="currentColor"
                                             viewBox="0 0 24 24"
@@ -3293,7 +4334,7 @@ onUnmounted(() => {
                                     </div>
 
                                     <div
-                                        class="prose prose-sm prose-invert max-w-none text-[13px] leading-relaxed break-words font-medium"
+                                        class="prose prose-sm max-w-none text-[13px] leading-relaxed break-words text-slate-800 font-medium"
                                         v-html="parseMarkdown(msg.content)"
                                     ></div>
                                 </div>
@@ -3305,7 +4346,7 @@ onUnmounted(() => {
                                 class="flex gap-2"
                             >
                                 <div
-                                    class="w-7 h-7 shrink-0 rounded-full bg-gradient-to-br from-blue-500 to-purple-500 flex items-center justify-center mt-1"
+                                    class="w-7 h-7 shrink-0 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 flex items-center justify-center mt-1 shadow-sm"
                                 >
                                     <svg
                                         class="w-4 h-4 text-white"
@@ -3322,17 +4363,17 @@ onUnmounted(() => {
                                     </svg>
                                 </div>
                                 <div
-                                    class="bg-[#1e1e20] border border-gray-800 rounded-2xl rounded-tl-sm p-3.5 flex space-x-1.5 items-center w-fit shadow-sm"
+                                    class="bg-white border border-slate-200 rounded-2xl rounded-tl-sm p-3.5 flex space-x-1.5 items-center w-fit shadow-sm"
                                 >
                                     <div
-                                        class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+                                        class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"
                                     ></div>
                                     <div
-                                        class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+                                        class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"
                                         style="animation-delay: 0.15s"
                                     ></div>
                                     <div
-                                        class="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+                                        class="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce"
                                         style="animation-delay: 0.3s"
                                     ></div>
                                 </div>
@@ -3369,11 +4410,11 @@ onUnmounted(() => {
             <!-- Main Content Area -->
                     <!-- Chat Input Area -->
                     <div
-                        class="p-3 bg-[#1e1e20] border-t border-gray-800 shrink-0 relative"
+                        class="p-3 bg-white border-t border-slate-200 shrink-0 relative"
                     >
                         <div
                             v-if="form.images.length > 0"
-                            class="absolute -top-10 left-3 right-3 bg-indigo-900/90 backdrop-blur text-indigo-100 text-xs px-3 py-2 rounded-t-lg flex items-center justify-between border-t border-x border-indigo-700/50 shadow-lg"
+                            class="absolute -top-10 left-3 right-3 bg-indigo-600/95 backdrop-blur text-white font-medium text-xs px-3 py-2 rounded-t-lg flex items-center justify-between border-t border-x border-indigo-500 shadow-md"
                         >
                             <span class="font-medium flex items-center gap-1.5">
                                 <svg
@@ -3413,10 +4454,10 @@ onUnmounted(() => {
                         </div>
                         <form
                             @submit.prevent="submit"
-                            class="flex items-end gap-2 bg-[#131314] p-1.5 border border-gray-700 rounded-xl focus-within:border-indigo-500 transition-colors shadow-inner"
+                            class="flex items-end gap-2 bg-slate-50 p-1.5 border border-slate-300 rounded-xl focus-within:border-indigo-500 focus-within:ring-1 focus-within:ring-indigo-500 transition-all shadow-inner"
                         >
                             <label
-                                class="cursor-pointer p-2 text-gray-400 hover:text-indigo-400 hover:bg-[#1e1e20] rounded-lg transition shrink-0"
+                                class="cursor-pointer p-2 text-slate-500 hover:text-indigo-600 hover:bg-slate-200/60 rounded-lg transition shrink-0"
                                 title="Unggah Gambar / PDF"
                             >
                                 <svg
@@ -3450,7 +4491,7 @@ onUnmounted(() => {
                             <textarea
                                 v-model="form.message"
                                 placeholder="Ketik pesan..."
-                                class="flex-1 bg-transparent border-none text-white text-[13px] focus:ring-0 p-2 max-h-24 min-h-[40px] resize-none outline-none custom-scrollbar"
+                                class="flex-1 bg-transparent border-none text-slate-800 text-[13px] focus:ring-0 p-2 max-h-24 min-h-[40px] resize-none outline-none custom-scrollbar placeholder-slate-400"
                                 @keydown.enter.prevent="submit"
                                 rows="1"
                             ></textarea>
@@ -3462,7 +4503,7 @@ onUnmounted(() => {
                                     (form.images.length === 0 &&
                                         !form.message.trim())
                                 "
-                                class="p-2.5 text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shrink-0 disabled:opacity-40 disabled:bg-gray-700 transition shadow-sm"
+                                class="p-2.5 text-white bg-indigo-600 hover:bg-indigo-700 rounded-lg shrink-0 disabled:opacity-40 disabled:bg-slate-300 disabled:text-slate-500 transition shadow-xs"
                             >
                                 <svg
                                     class="w-4 h-4"
@@ -3479,7 +4520,7 @@ onUnmounted(() => {
                                 </svg>
                             </button>
                         </form>
-                        <div class="text-center text-[10px] text-gray-500 mt-2">
+                        <div class="text-center text-[10px] text-slate-400 font-medium mt-2">
                             SmartScan AI dapat membuat kesalahan.
                         </div>
                     </div>
@@ -3488,7 +4529,7 @@ onUnmounted(() => {
                 <!-- Floating Toggle Button -->
                 <button
                     @click="isChatOpen = !isChatOpen"
-                    class="pointer-events-auto w-14 h-14 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-white shadow-[0_10px_25px_rgba(79,70,229,0.5)] hover:scale-105 hover:shadow-[0_10px_35px_rgba(79,70,229,0.7)] transition-all relative"
+                    class="pointer-events-auto w-14 h-14 bg-gradient-to-r from-blue-600 to-indigo-600 rounded-full flex items-center justify-center text-white shadow-[0_10px_25px_rgba(79,70,229,0.4)] hover:scale-105 hover:shadow-[0_10px_35px_rgba(79,70,229,0.6)] transition-all relative"
                 >
                     <span
                         v-if="
@@ -3497,7 +4538,7 @@ onUnmounted(() => {
                             (activeSession.status === 'processing' ||
                                 chatLoading[activeSession.id])
                         "
-                        class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-[#131314] animate-ping"
+                        class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white animate-ping"
                     ></span>
                     <span
                         v-if="
@@ -3506,7 +4547,7 @@ onUnmounted(() => {
                             (activeSession.status === 'processing' ||
                                 chatLoading[activeSession.id])
                         "
-                        class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-[#131314]"
+                        class="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full border-2 border-white"
                     ></span>
 
                     <svg
@@ -3542,16 +4583,16 @@ onUnmounted(() => {
         </div>
 
         <!-- VLR Checker Modal -->
-        <div v-if="isVlrModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-            <div class="bg-[#1e1e20] border border-gray-700 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
-                <div class="px-6 py-4 border-b border-gray-800 flex justify-between items-center">
-                    <h3 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-400 flex items-center gap-2">
-                        <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div v-if="isVlrModalOpen" class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+            <div class="bg-white border border-slate-200 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+                <div class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center">
+                    <h3 class="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 flex items-center gap-2">
+                        <svg class="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V8a2 2 0 00-2-2h-5m-4 0V5a2 2 0 114 0v1m-4 0a2 2 0 104 0m-5 8a2 2 0 100-4 2 2 0 000 4zm0 0c1.306 0 2.417.835 2.83 2M9 14a3.001 3.001 0 00-2.83 2M15 11h3m-3 4h2"></path>
                         </svg>
                         VLR Checker (Cek Umur Kartu)
                     </h3>
-                    <button @click="isVlrModalOpen = false" class="text-gray-400 hover:text-white transition bg-gray-800 hover:bg-gray-700 p-2 rounded-full">
+                    <button @click="isVlrModalOpen = false" class="text-slate-500 hover:text-slate-800 transition bg-slate-100 hover:bg-slate-200 p-2 rounded-full">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
                         </svg>
@@ -3561,23 +4602,23 @@ onUnmounted(() => {
                 <div class="p-6 overflow-y-auto custom-scrollbar flex flex-col md:flex-row gap-6">
                     <!-- Input Section -->
                     <div class="w-full md:w-1/3 flex flex-col">
-                        <label class="block text-sm font-medium text-gray-300 mb-2">Daftar Nomor Telepon (Satu per baris)</label>
+                        <label class="block text-sm font-bold text-slate-700 mb-2">Daftar Nomor Telepon (Satu per baris)</label>
                         <textarea 
                             v-model="vlrPhoneNumbers"
                             rows="10"
-                            class="w-full bg-[#131314] border border-gray-700 text-gray-200 focus:border-blue-500 focus:ring-blue-500 rounded-xl shadow-inner mb-4 p-3 text-sm font-mono placeholder-gray-600 custom-scrollbar"
+                            class="w-full bg-white border border-slate-300 text-slate-800 focus:border-blue-500 focus:ring-blue-500 rounded-xl shadow-inner mb-4 p-3 text-sm font-mono placeholder-slate-400 custom-scrollbar"
                             placeholder="Contoh:&#10;081234567890&#10;081987654321&#10;6285212341234"
                             :disabled="isVlrChecking"
                         ></textarea>
                         
-                        <div v-if="vlrErrorMessage" class="text-red-400 text-sm mb-4 bg-red-900/20 p-3 rounded-lg border border-red-800/50">
+                        <div v-if="vlrErrorMessage" class="text-red-600 text-sm mb-4 bg-red-50 p-3 rounded-lg border border-red-200 font-medium">
                             {{ vlrErrorMessage }}
                         </div>
                         
                         <button 
                             @click="checkVlrNumbers"
                             :disabled="isVlrChecking"
-                            class="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-medium rounded-xl disabled:opacity-50 transition shadow-lg flex items-center justify-center gap-2"
+                            class="w-full px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold rounded-xl disabled:opacity-50 transition shadow-md flex items-center justify-center gap-2"
                         >
                             <svg v-if="isVlrChecking" class="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
@@ -3589,42 +4630,42 @@ onUnmounted(() => {
                     
                     <!-- Results Section -->
                     <div class="w-full md:w-2/3 flex flex-col">
-                        <label class="block text-sm font-medium text-gray-300 mb-2">Hasil Pengecekan</label>
-                        <div class="bg-[#131314] border border-gray-700 rounded-xl overflow-hidden flex-1 flex flex-col min-h-[300px]">
+                        <label class="block text-sm font-bold text-slate-700 mb-2">Hasil Pengecekan</label>
+                        <div class="bg-white border border-slate-200 rounded-xl overflow-hidden flex-1 flex flex-col min-h-[300px] shadow-xs">
                             <div class="overflow-x-auto overflow-y-auto custom-scrollbar flex-1">
-                                <table class="min-w-full divide-y divide-gray-800 text-sm text-left">
-                                    <thead class="bg-[#1a1a1c] sticky top-0">
+                                <table class="min-w-full divide-y divide-slate-200 text-sm text-left">
+                                    <thead class="bg-slate-50 sticky top-0">
                                         <tr>
-                                            <th scope="col" class="px-4 py-3 font-medium text-gray-400">No. Telepon</th>
-                                            <th scope="col" class="px-4 py-3 font-medium text-gray-400">Provider</th>
-                                            <th scope="col" class="px-4 py-3 font-medium text-gray-400">Umur (Hari)</th>
-                                            <th scope="col" class="px-4 py-3 font-medium text-gray-400">Status</th>
+                                            <th scope="col" class="px-4 py-3 font-bold text-slate-600">No. Telepon</th>
+                                            <th scope="col" class="px-4 py-3 font-bold text-slate-600">Provider</th>
+                                            <th scope="col" class="px-4 py-3 font-bold text-slate-600">Umur (Hari)</th>
+                                            <th scope="col" class="px-4 py-3 font-bold text-slate-600">Status</th>
                                         </tr>
                                     </thead>
-                                    <tbody class="divide-y divide-gray-800/50">
+                                    <tbody class="divide-y divide-slate-200">
                                         <tr v-if="vlrResults.length === 0">
-                                            <td colspan="4" class="px-4 py-12 text-center text-gray-500 italic">
+                                            <td colspan="4" class="px-4 py-12 text-center text-slate-400 italic">
                                                 Belum ada data. Masukkan nomor telepon dan klik cek.
                                             </td>
                                         </tr>
-                                        <tr v-for="(res, index) in vlrResults" :key="index" class="hover:bg-[#1a1a1c]/50 transition">
-                                            <td class="px-4 py-3 font-mono text-gray-300">
+                                        <tr v-for="(res, index) in vlrResults" :key="index" class="hover:bg-slate-50/80 transition">
+                                            <td class="px-4 py-3 font-mono font-semibold text-slate-800">
                                                 {{ res.number }}
                                             </td>
-                                            <td class="px-4 py-3 text-gray-400">
+                                            <td class="px-4 py-3 text-slate-600">
                                                 {{ res.provider }}
                                             </td>
                                             <td class="px-4 py-3">
-                                                <span class="font-medium" :class="{'text-white': res.age !== '-', 'text-gray-600': res.age === '-'}">{{ res.age }}</span>
+                                                <span class="font-semibold" :class="{'text-slate-800': res.age !== '-', 'text-slate-400': res.age === '-'}">{{ res.age }}</span>
                                             </td>
                                             <td class="px-4 py-3">
-                                                <span v-if="res.status === 'error'" class="px-2.5 py-1 inline-flex text-xs font-semibold rounded-full bg-red-900/30 text-red-400 border border-red-800/50">
+                                                <span v-if="res.status === 'error'" class="px-2.5 py-1 inline-flex text-xs font-bold rounded-full bg-red-100 text-red-700 border border-red-200">
                                                     {{ res.type }}
                                                 </span>
-                                                <span v-else-if="res.age < 90" class="px-2.5 py-1 inline-flex text-xs font-semibold rounded-full bg-green-900/30 text-green-400 border border-green-800/50">
+                                                <span v-else-if="res.age < 90" class="px-2.5 py-1 inline-flex text-xs font-bold rounded-full bg-green-100 text-green-700 border border-green-200">
                                                     {{ res.type || 'Babycare' }}
                                                 </span>
-                                                <span v-else class="px-2.5 py-1 inline-flex text-xs font-semibold rounded-full bg-blue-900/30 text-blue-400 border border-blue-800/50">
+                                                <span v-else class="px-2.5 py-1 inline-flex text-xs font-bold rounded-full bg-blue-100 text-blue-700 border border-blue-200">
                                                     {{ res.type || 'Non-Babycare' }}
                                                 </span>
                                             </td>
@@ -3638,11 +4679,11 @@ onUnmounted(() => {
             </div>
         </div>
         <!-- Edit Modal -->
-        <div v-if="editModalPkg" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-            <div class="bg-[#1a1a1c] border border-gray-800 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
-                <div class="sticky top-0 bg-[#1a1a1c] border-b border-gray-800 px-6 py-4 flex items-center justify-between z-10">
-                    <h3 class="text-lg font-bold text-gray-100">Detail & Edit Data</h3>
-                    <button @click="closeEditModal" class="text-gray-400 hover:text-white transition">
+        <div v-if="editModalPkg" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+            <div class="bg-white border border-slate-200 rounded-xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar">
+                <div class="sticky top-0 bg-slate-50 border-b border-slate-200 px-6 py-4 flex items-center justify-between z-10">
+                    <h3 class="text-lg font-bold text-slate-800">Detail & Edit Data</h3>
+                    <button @click="closeEditModal" class="text-slate-400 hover:text-slate-700 transition">
                         <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
                     </button>
                 </div>
@@ -3651,63 +4692,63 @@ onUnmounted(() => {
                     <!-- Edit Form -->
                     <div class="grid grid-cols-2 gap-4">
                         <div>
-                            <label class="block text-xs text-gray-400 mb-1">Provider</label>
-                            <input v-model="editModalPkg.provider" class="w-full bg-[#252528] border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition" />
+                            <label class="block text-xs font-bold text-slate-700 mb-1 uppercase">Provider</label>
+                            <input v-model="editModalPkg.provider" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition shadow-sm" />
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-400 mb-1">Nama Paket</label>
-                            <input v-model="editModalPkg.package_name" class="w-full bg-[#252528] border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition" />
+                            <label class="block text-xs font-bold text-slate-700 mb-1 uppercase">Nama Paket</label>
+                            <input v-model="editModalPkg.package_name" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition shadow-sm" />
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-400 mb-1">Kuota (GB)</label>
-                            <input type="number" step="0.1" v-model="editModalPkg.gb" class="w-full bg-[#252528] border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition" />
+                            <label class="block text-xs font-bold text-slate-700 mb-1 uppercase">Kuota (GB)</label>
+                            <input type="number" step="0.1" v-model="editModalPkg.gb" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition shadow-sm" />
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-400 mb-1">Masa Aktif (Hari)</label>
-                            <input type="number" v-model="editModalPkg.days" class="w-full bg-[#252528] border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition" />
+                            <label class="block text-xs font-bold text-slate-700 mb-1 uppercase">Masa Aktif (Hari)</label>
+                            <input type="number" v-model="editModalPkg.days" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition shadow-sm" />
                         </div>
                         <div class="col-span-2">
-                            <label class="block text-xs text-gray-400 mb-1">Harga (Rp)</label>
-                            <input type="number" v-model="editModalPkg.price" class="w-full bg-[#252528] border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition" />
+                            <label class="block text-xs font-bold text-slate-700 mb-1 uppercase">Harga (Rp)</label>
+                            <input type="number" v-model="editModalPkg.price" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition shadow-sm" />
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-400 mb-1">Tanggal Gambar Diambil</label>
-                            <input type="date" v-model="editModalPkg.image_date" class="w-full bg-[#252528] border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition" />
+                            <label class="block text-xs font-bold text-slate-700 mb-1 uppercase">Tanggal Gambar Diambil</label>
+                            <input type="date" v-model="editModalPkg.image_date" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition shadow-sm" />
                         </div>
                         <div>
-                            <label class="block text-xs text-gray-400 mb-1">Jam Gambar Diambil</label>
-                            <input type="time" step="1" v-model="editModalPkg.image_time" class="w-full bg-[#252528] border border-gray-700 rounded-md px-3 py-2 text-sm text-gray-200 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition" />
+                            <label class="block text-xs font-bold text-slate-700 mb-1 uppercase">Jam Gambar Diambil</label>
+                            <input type="time" step="1" v-model="editModalPkg.image_time" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition shadow-sm" />
                         </div>
 
                     </div>
 
                     <!-- Comparison Info (if available) -->
-                    <div v-if="comparisonResults[editModalListId] && comparisonResults[editModalListId][editModalPkg.id]" class="mt-6 border-t border-gray-800 pt-6">
+                    <div v-if="comparisonResults[editModalListId] && comparisonResults[editModalListId][editModalPkg.id]" class="mt-6 border-t border-slate-200 pt-6">
                         <div class="flex items-center justify-between mb-3">
-                            <h4 class="text-sm font-semibold text-gray-300">Perbandingan dengan Data Input (CSV/Excel)</h4>
+                            <h4 class="text-sm font-bold text-slate-800">Perbandingan dengan Data Input (CSV/Excel)</h4>
                             <button 
                                 v-if="comparisonResults[editModalListId][editModalPkg.id].status !== 'matched' && comparisonResults[editModalListId][editModalPkg.id].status !== 'not_found'"
                                 @click="syncWithCsv" 
-                                class="px-3 py-1.5 text-xs font-medium bg-indigo-600/80 hover:bg-indigo-500 text-white rounded-md border border-indigo-500/50 shadow-lg shadow-indigo-500/20 transition flex items-center gap-1.5">
+                                class="px-3 py-1.5 text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white rounded-md border border-indigo-500 shadow-sm transition flex items-center gap-1.5">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
                                 Samakan Data Input
                             </button>
                         </div>
                         
-                        <div v-if="comparisonResults[editModalListId][editModalPkg.id].status === 'not_found'" class="bg-red-500/10 border border-red-500/20 rounded-md p-3 text-sm text-red-400">
+                        <div v-if="comparisonResults[editModalListId][editModalPkg.id].status === 'not_found'" class="bg-red-50 border border-red-200 rounded-md p-3 text-sm font-medium text-red-600">
                             Data hasil AI ini tidak memiliki pasangan yang cocok di dalam file Ground Truth yang di-upload.
                         </div>
-                        <div v-else-if="comparisonResults[editModalListId][editModalPkg.id].status === 'synced'" class="bg-blue-500/10 border border-blue-500/20 rounded-md p-3 text-sm text-blue-400">
+                        <div v-else-if="comparisonResults[editModalListId][editModalPkg.id].status === 'synced'" class="bg-blue-50 border border-blue-200 rounded-md p-3 text-sm font-medium text-blue-700">
                             Data telah disamakan dengan Ground Truth.
                         </div>
                         <div v-else class="overflow-x-auto text-left">
-                            <table class="w-full text-sm text-gray-300">
+                            <table class="w-full text-sm text-slate-700">
                                 <thead>
-                                    <tr class="bg-[#252528] text-gray-400">
-                                        <th class="p-2 border border-gray-700 rounded-tl-md">Atribut</th>
-                                        <th class="p-2 border border-gray-700">Hasil AI (Current)</th>
-                                        <th class="p-2 border border-gray-700">Data Input</th>
-                                        <th class="p-2 border border-gray-700 rounded-tr-md text-center">Status</th>
+                                    <tr class="bg-slate-50 text-slate-600 font-bold border-b border-slate-200">
+                                        <th class="p-2 border border-slate-200 rounded-tl-md">Atribut</th>
+                                        <th class="p-2 border border-slate-200">Hasil AI (Current)</th>
+                                        <th class="p-2 border border-slate-200">Data Input</th>
+                                        <th class="p-2 border border-slate-200 rounded-tr-md text-center">Status</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -3716,11 +4757,11 @@ onUnmounted(() => {
                                         { label: 'Kuota (GB)', key: 'gb', format: v => v },
                                         { label: 'Harga (Rp)', key: 'price', format: v => Number(v).toLocaleString('id-ID') },
                                         { label: 'Masa Aktif', key: 'days', format: v => v + ' Hari' }
-                                    ]" :key="attr.key">
-                                        <td class="p-2 border border-gray-700 font-medium">{{ attr.label }}</td>
-                                        <td class="p-2 border border-gray-700">{{ attr.format(editModalPkg[attr.key]) }}</td>
-                                        <td class="p-2 border border-gray-700">{{ attr.format(comparisonResults[editModalListId][editModalPkg.id].csv_row[attr.key]) }}</td>
-                                        <td class="p-2 border border-gray-700 text-center">
+                                    ]" :key="attr.key" class="border-b border-slate-100">
+                                        <td class="p-2 border border-slate-200 font-bold text-slate-800">{{ attr.label }}</td>
+                                        <td class="p-2 border border-slate-200">{{ attr.format(editModalPkg[attr.key]) }}</td>
+                                        <td class="p-2 border border-slate-200">{{ attr.format(comparisonResults[editModalListId][editModalPkg.id].csv_row[attr.key]) }}</td>
+                                        <td class="p-2 border border-slate-200 text-center">
                                             {{ checkMatch(attr.key, editModalPkg[attr.key], comparisonResults[editModalListId][editModalPkg.id].csv_row[attr.key]) ? '✅' : '❌' }}
                                         </td>
                                     </tr>
@@ -3730,9 +4771,9 @@ onUnmounted(() => {
                     </div>
                 </div>
 
-                <div class="sticky bottom-0 bg-[#1a1a1c] border-t border-gray-800 px-6 py-4 flex items-center justify-end gap-3 z-10">
-                    <button @click="closeEditModal" class="px-4 py-2 text-sm font-medium text-gray-300 hover:text-white transition">Batal</button>
-                    <button @click="saveRowEdit" :disabled="isSavingModal" class="px-4 py-2 text-sm font-medium bg-blue-600 hover:bg-blue-500 rounded-md text-white transition shadow-lg shadow-blue-500/20 flex items-center gap-2">
+                <div class="sticky bottom-0 bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-end gap-3 z-10">
+                    <button @click="closeEditModal" class="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 transition">Batal</button>
+                    <button @click="saveRowEdit" :disabled="isSavingModal" class="px-4 py-2 text-sm font-semibold bg-blue-600 hover:bg-blue-500 rounded-md text-white transition shadow-md flex items-center gap-2">
                         <svg v-if="isSavingModal" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                         Simpan Perubahan
                     </button>
@@ -3750,33 +4791,36 @@ onUnmounted(() => {
     background: transparent;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb {
-    background-color: #3f3f46;
+    background-color: #cbd5e1;
     border-radius: 20px;
 }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-    background-color: #52525b;
+    background-color: #94a3b8;
 }
 
-/* Tailwind typography overrides for dark mode */
-:deep(.prose-invert) {
-    color: #e4e4e7;
+/* Tailwind typography styling for light mode */
+:deep(.prose) {
+    color: #1e293b;
 }
-:deep(.prose-invert h1),
-:deep(.prose-invert h2),
-:deep(.prose-invert h3),
-:deep(.prose-invert h4) {
-    color: #f4f4f5;
+:deep(.prose h1),
+:deep(.prose h2),
+:deep(.prose h3),
+:deep(.prose h4) {
+    color: #0f172a;
+    font-weight: 700;
 }
-:deep(.prose-invert a) {
-    color: #60a5fa;
+:deep(.prose a) {
+    color: #2563eb;
 }
-:deep(.prose-invert strong) {
-    color: #f4f4f5;
+:deep(.prose strong) {
+    color: #0f172a;
+    font-weight: 700;
 }
-:deep(.prose-invert code) {
-    color: #fb7185;
-    background-color: #27272a;
+:deep(.prose code) {
+    color: #e11d48;
+    background-color: #f1f5f9;
     padding: 0.125rem 0.25rem;
     border-radius: 0.25rem;
+    border: 1px solid #e2e8f0;
 }
 </style>

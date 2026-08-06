@@ -36,6 +36,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::get('/scanner', [ScannerController::class, 'index'])->name('scanner.index');
     Route::post('/scanner', [ScannerController::class, 'store'])->name('scanner.store');
     Route::post('/scanner/upload-data', [ScannerController::class, 'uploadData'])->name('scanner.uploadData');
+    Route::get('/api/trends', [ScannerController::class, 'trendData'])->name('api.trends');
     Route::delete('/scanner/{pricelist}', [ScannerController::class, 'destroy'])->name('scanner.destroy');
     Route::get('/scanner/{pricelist}/export', [ScannerController::class, 'export'])->name('scanner.export');
     Route::get('/scanner/{pricelist}/export-csv', [ScannerController::class, 'exportCsv'])->name('scanner.exportCsv');
@@ -56,6 +57,9 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // VLR Checker
     Route::get('/vlr-checker', [VlrController::class, 'index'])->name('vlr.index');
     Route::post('/vlr-checker/check', [VlrController::class, 'check'])->name('vlr.check');
+
+    // AI Insight
+    Route::post('/api/scanner/ai-insight', [ScannerController::class, 'aiInsight'])->name('scanner.aiInsight');
 
     // API Key management
     Route::get('/api/keys', [ApiKeyController::class, 'index'])->name('apikeys.index');

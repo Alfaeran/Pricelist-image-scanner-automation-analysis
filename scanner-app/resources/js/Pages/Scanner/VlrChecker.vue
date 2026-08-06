@@ -42,7 +42,7 @@ const checkNumbers = async () => {
         const provider = guessProvider(number);
         
         try {
-            const res = await axios.post('/vlr-checker/check', {
+            const res = await axios.post(route('vlr.check'), {
                 phone_number: number,
                 provider: provider
             });

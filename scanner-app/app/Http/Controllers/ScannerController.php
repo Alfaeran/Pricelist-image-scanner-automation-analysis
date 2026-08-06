@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\Pricelist;
 use App\Models\ExtractedPackage;
+use App\Models\ApiKey;
 use App\Jobs\ProcessPricelistJob;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -759,5 +760,95 @@ class ScannerController extends Controller
         }
 
         return response()->json(['success' => true]);
+    }
+
+    public function aiInsight(Request $request)
+    {
+        $packages = $request->input('packages');
+
+        if (!$packages || empty($packages)) {
+            return response()->json(['error' => 'Data paket kosong.'], 400);
+        }
+
+        // Get all active API keys
+        $activeKeysData = ApiKey::where('is_active', true)->get();
+        if ($activeKeysData->isEmpty()) {
+            return response()->json(['error' => 'Tidak ada API Key yang aktif. Silakan tambahkan di menu samping.'], 500);
+        }
+        $apiKeysString = implode(',', $activeKeysData->pluck('key')->toArray());
+
+        // Increment usage count on the first key for telemetry
+        $firstKey = $activeKeysData->first();
+        if ($firstKey) $firstKey->increment('usage_count');
+
+        // Dynamic model selection based on supported_models
+        $supportedModelsPool = [];
+        foreach ($activeKeysData as $keyModel) {
+            if (is_array($keyModel->supported_models)) {
+                $supportedModelsPool = array_merge($supportedModelsPool, $keyModel->supported_models);
+            }
+        }
+        $supportedModelsPool = array_unique($supportedModelsPool);
+
+        $priority = [
+            'gemini-3.1-flash-lite',
+            'gemini-3.5-flash',
+            'gemini-2.0-flash',
+            'gemini-1.5-flash',
+            'gemini-1.5-flash-8b',
+            'gemini-1.5-pro'
+        ];
+        
+        $finalModels = [];
+        foreach ($priority as $m) {
+            if (in_array($m, $supportedModelsPool)) {
+                $finalModels[] = $m;
+            }
+        }
+        
+        if (empty($finalModels)) {
+            $finalModels = !empty($supportedModelsPool) ? $supportedModelsPool : $priority;
+        }
+        $modelsString = implode(',', $finalModels);
+
+        // Ensure numbers are properly typed for FastAPI validation
+        $formattedPackages = collect($packages)->map(function ($pkg) {
+            return [
+                'provider' => (string) ($pkg['provider'] ?? ''),
+                'package_name' => (string) ($pkg['package_name'] ?? ''),
+                'price' => (int) ($pkg['price'] ?? 0),
+                'gb' => (float) ($pkg['gb'] ?? 0),
+                'days' => (int) ($pkg['days'] ?? 0),
+                'yield_val' => (float) ($pkg['yield_val'] ?? 0),
+                'category' => (string) ($pkg['category'] ?? ''),
+            ];
+        })->toArray();
+
+        // Hardcoded Strategy Prompt
+        $prompt = "Tolong analisis ringkasan data paket internet berikut secara komprehensif.\n" .
+                  "Berikan insight mendalam mengenai provider mana yang unggul di kategori mana (harga termurah, kuota terbesar, masa aktif terlama, dan efisiensi / yield terbaik).\n" .
+                  "Kemudian, berikan saran strategis khusus yang *actionable* untuk provider IM3 dan 3 (Tri) agar mereka bisa memenangkan persaingan pasar melawan provider lain yang ada di data ini.\n" .
+                  "Format respons menggunakan Markdown yang rapi dan profesional.";
+
+        try {
+            $response = Http::timeout(120)->post(env('FASTAPI_URL', 'http://127.0.0.1:8001') . '/api/chat', [
+                'message' => $prompt,
+                'packages' => $formattedPackages,
+                'api_keys' => $apiKeysString,
+                'model' => $modelsString
+            ]);
+
+            if ($response->successful()) {
+                return response()->json(['insight' => $response->json('data')['text']]);
+            }
+
+            $errorMessage = $response->json('detail') ?: ('Gagal mendapatkan insight dari server AI (HTTP ' . $response->status() . '): ' . $response->body());
+            \Illuminate\Support\Facades\Log::error('AI Insight FastAPI Error: ' . $response->body());
+            return response()->json(['error' => $errorMessage], $response->status() >= 400 && $response->status() < 600 ? $response->status() : 500);
+        } catch (\Illuminate\Http\Client\ConnectionException $e) {
+            return response()->json(['error' => 'Tidak bisa terhubung ke server AI Python (FastAPI).'], 503);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Terjadi kesalahan internal: ' . $e->getMessage()], 500);
+        }
     }
 }
