@@ -731,11 +731,11 @@ const monthlyYieldChartData = computed(() => {
                 label: prov,
                 type: 'scatter',
                 data: providerPoints,
-                backgroundColor: getProviderColor(prov),
-                borderColor: '#ffffff',
-                borderWidth: 1,
-                pointRadius: 6,
-                pointHoverRadius: 8,
+                backgroundColor: getProviderColor(prov) + 'CC',
+                borderColor: getProviderColor(prov),
+                borderWidth: 0.5,
+                pointRadius: 4,
+                pointHoverRadius: 6,
                 hidden: yieldLandscapeHiddenProviders.value.includes(prov),
                 order: 1
             });
@@ -757,14 +757,14 @@ const monthlyYieldChartData = computed(() => {
             label: 'Median per bucket',
             type: 'line',
             data: medianPoints,
-            borderColor: '#64748b',
-            borderDash: [6, 4],
-            borderWidth: 2,
-            pointRadius: 6,
-            pointHoverRadius: 8,
-            pointBackgroundColor: '#334155',
+            borderColor: 'rgba(100, 116, 139, 0.4)',
+            borderDash: [4, 4],
+            borderWidth: 1.5,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointBackgroundColor: '#64748b',
             pointBorderColor: '#ffffff',
-            pointBorderWidth: 1.5,
+            pointBorderWidth: 1,
             pointStyle: 'rectRot',
             fill: false,
             tension: 0.25,
@@ -821,11 +821,11 @@ const sachetYieldChartData = computed(() => {
                 label: prov,
                 type: 'scatter',
                 data: providerPoints,
-                backgroundColor: getProviderColor(prov),
-                borderColor: '#ffffff',
-                borderWidth: 1,
-                pointRadius: 6,
-                pointHoverRadius: 8,
+                backgroundColor: getProviderColor(prov) + 'CC',
+                borderColor: getProviderColor(prov),
+                borderWidth: 0.5,
+                pointRadius: 4,
+                pointHoverRadius: 6,
                 hidden: yieldLandscapeHiddenProviders.value.includes(prov),
                 order: 1
             });
@@ -847,14 +847,14 @@ const sachetYieldChartData = computed(() => {
             label: 'Median per bucket',
             type: 'line',
             data: medianPoints,
-            borderColor: '#64748b',
-            borderDash: [6, 4],
-            borderWidth: 2,
-            pointRadius: 6,
-            pointHoverRadius: 8,
-            pointBackgroundColor: '#334155',
+            borderColor: 'rgba(100, 116, 139, 0.4)',
+            borderDash: [4, 4],
+            borderWidth: 1.5,
+            pointRadius: 3,
+            pointHoverRadius: 5,
+            pointBackgroundColor: '#64748b',
             pointBorderColor: '#ffffff',
-            pointBorderWidth: 1.5,
+            pointBorderWidth: 1,
             pointStyle: 'rectRot',
             fill: false,
             tension: 0.25,
@@ -869,7 +869,7 @@ const getYieldChartOptions = (labels) => ({
     responsive: true,
     maintainAspectRatio: false,
     layout: {
-        padding: { top: 15, right: 25, bottom: 10, left: 15 }
+        padding: { top: 0, right: 10, bottom: 0, left: 0 }
     },
     scales: {
         x: {
@@ -880,8 +880,8 @@ const getYieldChartOptions = (labels) => ({
             title: {
                 display: true,
                 text: labels.length === 8 ? 'Slab EUP (Rp)' : 'Validity (hari)',
-                color: '#334155',
-                font: { family: "'Inter', sans-serif", weight: '700', size: 12 }
+                color: '#64748b',
+                font: { family: "'Inter', sans-serif", weight: '600', size: 11 }
             },
             afterBuildTicks: (scale) => {
                 scale.ticks = labels.map((_, i) => ({ value: i }));
@@ -890,12 +890,12 @@ const getYieldChartOptions = (labels) => ({
                 callback: function(value) {
                     return labels[Math.round(value)] || '';
                 },
-                color: '#475569',
-                font: { family: "'Inter', sans-serif", weight: '600', size: 11 },
+                color: '#64748b',
+                font: { family: "'Inter', sans-serif", weight: '500', size: 10 },
                 padding: 8
             },
             grid: {
-                color: '#f1f5f9',
+                color: '#f8fafc',
                 drawBorder: false
             }
         },
@@ -904,20 +904,20 @@ const getYieldChartOptions = (labels) => ({
             title: {
                 display: true,
                 text: 'Yield (Rp per GB)',
-                color: '#334155',
-                font: { family: "'Inter', sans-serif", weight: '700', size: 12 }
+                color: '#64748b',
+                font: { family: "'Inter', sans-serif", weight: '600', size: 11 }
             },
             ticks: {
                 callback: function(value) {
-                    return Number(value).toLocaleString('id-ID');
+                    return 'Rp ' + Number(value).toLocaleString('id-ID');
                 },
-                color: '#475569',
-                font: { family: "'Inter', sans-serif", size: 11 },
+                color: '#64748b',
+                font: { family: "'Inter', sans-serif", weight: '500', size: 10 },
                 padding: 8
             },
             grid: {
-                color: '#e2e8f0',
-                borderDash: [2, 2],
+                color: '#f8fafc',
+                borderDash: [4, 4],
                 drawBorder: false
             }
         }
@@ -3251,84 +3251,75 @@ onUnmounted(() => {
                         </div>
 
                         <!-- Competitive Yield Landscape Section -->
-                        <div class="mt-10 pt-8 border-t border-slate-200">
-                        
-                        <!-- Header & Title -->
-                        <div class="mb-6 border-b border-slate-200 pb-4">
-                            <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600" viewBox="0 0 20 20" fill="currentColor">
-                                    <path d="M2 10a8 8 0 018-8v8h8a8 8 0 11-16 0z" />
-                                    <path d="M12 2.252A8.014 8.014 0 0117.748 8H12V2.252z" />
-                                </svg>
-                                Competitive Yield Landscape — Circle Java & Market Overview
-                            </h3>
-                            <p class="text-xs text-slate-500 mt-1 font-medium">
-                                Yield = EUP / Total GB (Rp per GB) · dots = individual SKUs (jittered) · dashed line = median across all operators per bucket · click legend to toggle operator
-                            </p>
-                        </div>
-
-                        <!-- Interactive Legend & Median Indicator -->
-                        <div class="flex flex-wrap items-center justify-between gap-4 mb-8 px-4 py-3 bg-slate-50 border border-slate-200/80 rounded-xl shadow-xs">
-                            <div class="flex flex-wrap items-center gap-2.5">
-                                <span class="text-xs font-bold text-slate-700 mr-2">Provider:</span>
-                                <button
-                                    v-for="prov in yieldLandscapeProviders"
-                                    :key="prov"
-                                    @click="toggleYieldProvider(prov)"
-                                    class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 border"
-                                    :class="!yieldLandscapeHiddenProviders.includes(prov)
-                                        ? 'bg-white text-slate-800 border-slate-300 shadow-xs ring-1 ring-slate-200/50'
-                                        : 'bg-slate-200/60 text-slate-400 border-transparent opacity-60 hover:opacity-80'"
-                                >
-                                    <span class="w-2.5 h-2.5 rounded-full shadow-xs" :style="{ backgroundColor: !yieldLandscapeHiddenProviders.includes(prov) ? getProviderColor(prov) : '#94a3b8' }"></span>
-                                    <span>{{ prov }}</span>
-                                </button>
-                            </div>
-                            <div class="flex items-center gap-2.5 text-xs font-extrabold text-slate-700 bg-white px-3 py-1.5 rounded-lg border border-slate-200 shadow-xs">
-                                <span class="inline-block w-6 border-t-2 border-dashed border-slate-500 relative">
-                                    <span class="absolute left-1/2 -top-[4px] -translate-x-1/2 w-2 h-2 bg-slate-700 transform rotate-45 border border-white"></span>
-                                </span>
-                                <span>Median per bucket</span>
-                            </div>
-                        </div>
-
-                        <!-- Chart 1: Monthly (Paket Bulanan) -->
-                        <div class="mb-12">
-                            <div class="mb-4">
-                                <div class="flex items-center gap-2.5">
-                                    <span class="bg-blue-100 text-blue-700 font-extrabold text-[11px] px-2.5 py-0.5 rounded-md tracking-wider border border-blue-200 uppercase shadow-xs">Monthly</span>
-                                    <h4 class="text-base font-extrabold text-slate-800">Paket Bulanan — Yield vs Slab EUP (25K bins)</h4>
+                        <div class="mt-12 pt-6 border-t border-slate-200">
+                            
+                            <!-- Interactive Legend & Median Indicator -->
+                            <div class="flex flex-wrap items-center justify-center gap-6 mb-12">
+                                <div class="flex flex-wrap items-center justify-center gap-1.5">
+                                    <span class="text-[10px] font-bold text-slate-400 mr-2 uppercase tracking-widest">Provider:</span>
+                                    <button
+                                        v-for="prov in yieldLandscapeProviders"
+                                        :key="prov"
+                                        @click="toggleYieldProvider(prov)"
+                                        class="flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-bold transition-all duration-200"
+                                        :class="!yieldLandscapeHiddenProviders.includes(prov)
+                                            ? 'text-slate-600 hover:bg-slate-50'
+                                            : 'text-slate-300 opacity-50 hover:opacity-80'"
+                                    >
+                                        <span class="w-2 h-2 rounded-full" :style="{ backgroundColor: !yieldLandscapeHiddenProviders.includes(prov) ? getProviderColor(prov) : '#cbd5e1' }"></span>
+                                        <span>{{ prov }}</span>
+                                    </button>
                                 </div>
-                                <p class="text-xs text-slate-500 mt-1 font-medium">Grouped by end-user price. Lower yield = better Rp/GB (more aggressive pricing).</p>
-                            </div>
-                            <div class="h-[420px] w-full border border-slate-200/80 rounded-xl p-4 bg-white shadow-xs">
-                                <Scatter
-                                    v-if="monthlyYieldChartData.datasets.length > 0"
-                                    :data="monthlyYieldChartData"
-                                    :options="getYieldChartOptions(['0–25K', '25–50K', '50–75K', '75–100K', '100–125K', '125–150K', '150–200K', '200K+'])"
-                                />
-                                <div v-else class="flex h-full items-center justify-center text-slate-400 text-sm italic font-medium">Belum ada data paket bulanan untuk ditampilkan.</div>
-                            </div>
-                        </div>
-
-                        <!-- Chart 2: Sachet / Daily (Paket Harian) -->
-                        <div>
-                            <div class="mb-4">
-                                <div class="flex items-center gap-2.5">
-                                    <span class="bg-amber-100 text-amber-800 font-extrabold text-[11px] px-2.5 py-0.5 rounded-md tracking-wider border border-amber-200 uppercase shadow-xs">Sachet</span>
-                                    <h4 class="text-base font-extrabold text-slate-800">Paket Harian — Yield vs Validity (hari)</h4>
+                                <div class="w-px h-4 bg-slate-200 hidden sm:block"></div>
+                                <div class="flex items-center gap-2 text-[11px] font-bold text-slate-500">
+                                    <span class="inline-block w-4 border-t border-dashed border-slate-400 relative">
+                                        <span class="absolute left-1/2 -top-[2.5px] -translate-x-1/2 w-1 h-1 bg-slate-500 transform rotate-45"></span>
+                                    </span>
+                                    <span>Median per bucket</span>
                                 </div>
-                                <p class="text-xs text-slate-500 mt-1 font-medium">Grouped by validity days (1d–19d). Short validity usually carries higher Rp/GB.</p>
                             </div>
-                            <div class="h-[420px] w-full border border-slate-200/80 rounded-xl p-4 bg-white shadow-xs">
-                                <Scatter
-                                    v-if="sachetYieldChartData.datasets.length > 0"
-                                    :data="sachetYieldChartData"
-                                    :options="getYieldChartOptions(sachetYieldLabels)"
-                                />
-                                <div v-else class="flex h-full items-center justify-center text-slate-400 text-sm italic font-medium">Belum ada data paket harian/sachet untuk ditampilkan.</div>
+
+                            <!-- Chart 1: Monthly (Paket Bulanan) -->
+                            <div class="mb-16">
+                                <div class="mb-6 flex flex-col items-center text-center">
+                                    <div class="flex items-center justify-center gap-2 mb-1">
+                                        <span class="text-slate-400 font-bold text-[10px] tracking-widest uppercase">Monthly</span>
+                                        <span class="text-slate-300 font-bold">·</span>
+                                        <h4 class="text-[13px] font-bold text-slate-700">Paket Bulanan — Yield vs Slab EUP</h4>
+                                    </div>
+                                    <p class="text-[11px] text-slate-400 font-medium">Grouped by end-user price. Lower yield = better Rp/GB (more aggressive pricing).</p>
+                                </div>
+                                <div class="h-[500px] w-full bg-white relative">
+                                    <Scatter
+                                        v-if="monthlyYieldChartData.datasets.length > 0"
+                                        :data="monthlyYieldChartData"
+                                        :options="getYieldChartOptions(['0–25K', '25–50K', '50–75K', '75–100K', '100–125K', '125–150K', '150–200K', '200K+'])"
+                                    />
+                                    <div v-else class="flex h-full items-center justify-center text-slate-400 text-sm italic font-medium">Belum ada data paket bulanan untuk ditampilkan.</div>
+                                </div>
                             </div>
-                        </div>
+
+                            <hr class="border-slate-100 mb-12 w-1/3 mx-auto" />
+
+                            <!-- Chart 2: Sachet / Daily (Paket Harian) -->
+                            <div>
+                                <div class="mb-6 flex flex-col items-center text-center">
+                                    <div class="flex items-center justify-center gap-2 mb-1">
+                                        <span class="text-slate-400 font-bold text-[10px] tracking-widest uppercase">Sachet</span>
+                                        <span class="text-slate-300 font-bold">·</span>
+                                        <h4 class="text-[13px] font-bold text-slate-700">Paket Harian — Yield vs Validity</h4>
+                                    </div>
+                                    <p class="text-[11px] text-slate-400 font-medium">Grouped by validity days (1d–19d). Short validity usually carries higher Rp/GB.</p>
+                                </div>
+                                <div class="h-[500px] w-full bg-white relative">
+                                    <Scatter
+                                        v-if="sachetYieldChartData.datasets.length > 0"
+                                        :data="sachetYieldChartData"
+                                        :options="getYieldChartOptions(sachetYieldLabels)"
+                                    />
+                                    <div v-else class="flex h-full items-center justify-center text-slate-400 text-sm italic font-medium">Belum ada data paket harian/sachet untuk ditampilkan.</div>
+                                </div>
+                            </div>
                     </div>
                     </div>
                     </div>
