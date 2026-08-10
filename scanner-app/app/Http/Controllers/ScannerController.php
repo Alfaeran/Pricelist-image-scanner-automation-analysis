@@ -394,11 +394,7 @@ class ScannerController extends Controller
                 $gb = (float) $pkg['gb'];
                 $days = (int) $pkg['days'];
                 
-                if (stripos($pkg['package_name'] ?? '', 'unlimited') !== false && $days > 0) {
-                    $yield = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
-                } else {
-                    $yield = $gb > 0 ? ceil($price / $gb) : 0;
-                }
+                $yield = $this->calculateYield($pkg['package_name'] ?? '', $gb, $days, $price);
                 
                 $category = 'Bulanan (Standar)';
                 if ($days <= 7) $category = 'Harian (Sachet)';
@@ -413,6 +409,7 @@ class ScannerController extends Controller
                     'gb' => $gb,
                     'days' => $days,
                     'yield_val' => $yield,
+                    'is_anomaly' => ($price <= 0 || $gb <= 0 || $yield > 50000),
                     'category' => $category,
                     'image_timestamp' => $pkg['image_timestamp'] ?? null,
                     'image_location' => $pkg['image_location'] ?? null,
@@ -438,11 +435,7 @@ class ScannerController extends Controller
         $gb = (float) $request->gb;
         $days = (int) $request->days;
         
-        if (stripos($request->package_name ?? '', 'unlimited') !== false && $days > 0) {
-            $yield = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
-        } else {
-            $yield = $gb > 0 ? ceil($price / $gb) : 0;
-        }
+        $yield = $this->calculateYield($request->package_name ?? '', $gb, $days, $price);
         
         $category = 'Bulanan (Standar)';
         if ($days <= 7) $category = 'Harian (Sachet)';
@@ -456,6 +449,7 @@ class ScannerController extends Controller
             'gb' => $gb,
             'days' => $days,
             'yield_val' => $yield,
+            'is_anomaly' => ($price <= 0 || $gb <= 0 || $yield > 50000),
             'category' => $category,
             'image_timestamp' => $request->image_timestamp,
         ]);
@@ -531,7 +525,7 @@ class ScannerController extends Controller
                 $days = (int) preg_replace('/[^\d]/', '', $row[5]);
                 
                 // Calculate category and yield
-                $yield = $gb > 0 ? ceil($price / $gb) : 0;
+                $yield = $this->calculateYield("Paket " . $provider, $gb, $days, $price);
                 
                 $category = 'Bulanan (Standar)';
                 if ($days <= 7) $category = 'Harian (Sachet)';
@@ -546,6 +540,7 @@ class ScannerController extends Controller
                     'gb' => $gb,
                     'days' => $days,
                     'yield_val' => $yield,
+                    'is_anomaly' => ($price <= 0 || $gb <= 0 || $yield > 50000),
                     'category' => $category,
                     'product_type' => 'Data',
                     'image_timestamp' => $manualTimestamp,
@@ -679,6 +674,7 @@ class ScannerController extends Controller
     {
         $updates = $request->input('updates', []);
         $newPackages = $request->input('new_packages', []);
+        $mismatchesByProvider = [];
 
         // Process updates
         foreach ($updates as $update) {
@@ -686,6 +682,22 @@ class ScannerController extends Controller
                           ->where('id', $update['id'])
                           ->first();
             if ($pkg) {
+                // Record mismatch if there is a significant data correction
+                if ($pkg->price != $update['price'] || $pkg->gb != $update['gb'] || $pkg->days != $update['days']) {
+                    $mismatchesByProvider[$update['provider']][] = [
+                        'ai_data' => [
+                            'price' => $pkg->price,
+                            'gb' => $pkg->gb,
+                            'days' => $pkg->days
+                        ],
+                        'ground_truth' => [
+                            'price' => $update['price'],
+                            'gb' => $update['gb'],
+                            'days' => $update['days']
+                        ]
+                    ];
+                }
+
                 $pkg->provider = $update['provider'];
                 $pkg->price = $update['price'];
                 $pkg->gb = $update['gb'];
@@ -706,14 +718,16 @@ class ScannerController extends Controller
                 $gb = (float)$pkg->gb;
                 $days = (int)$pkg->days;
                 
-                if (stripos($pkg->package_name ?? '', 'unlimited') !== false && $days > 0) {
-                    $pkg->yield_val = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
-                } else {
-                    $pkg->yield_val = $gb > 0 ? ceil($price / $gb) : 0;
-                }
+                $pkg->yield_val = $this->calculateYield($pkg->package_name ?? '', $gb, $days, $price);
+                $pkg->is_anomaly = ($price <= 0 || $gb <= 0 || $pkg->yield_val > 50000);
 
                 $pkg->save();
             }
+        }
+
+        // Dispatch learning job for each provider that had mismatches
+        foreach ($mismatchesByProvider as $provider => $mismatches) {
+            \App\Jobs\TrainWorkerModelJob::dispatch($provider, $mismatches);
         }
 
         // Process new packages
@@ -739,7 +753,8 @@ class ScannerController extends Controller
                 'price' => $price,
                 'gb' => $gb,
                 'days' => $days,
-                'yield_val' => $gb > 0 ? ceil($price / $gb) : 0,
+                'yield_val' => $this->calculateYield("Paket " . $provider, $gb, $days, $price),
+                'is_anomaly' => ($price <= 0 || $gb <= 0 || ($gb > 0 ? ceil($price / $gb) : 0) > 50000),
                 'category' => $category,
             ]);
         }
@@ -751,15 +766,141 @@ class ScannerController extends Controller
             $gb = (float)$pkg->gb;
             $days = (int)$pkg->days;
             
-            if (stripos($pkg->package_name ?? '', 'unlimited') !== false && $days > 0) {
-                $pkg->yield_val = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
-            } else {
-                $pkg->yield_val = $gb > 0 ? ceil($price / $gb) : 0;
-            }
+            $pkg->yield_val = $this->calculateYield($pkg->package_name ?? '', $gb, $days, $price);
+            $pkg->is_anomaly = ($price <= 0 || $gb <= 0 || $pkg->yield_val > 50000);
             $pkg->save();
         }
 
         return response()->json(['success' => true]);
+    }
+
+    /**
+     * Market Trend Data API
+     */
+    public function trendData(Request $request)
+    {
+        $startDate = $request->input('start_date');
+        $endDate = $request->input('end_date');
+
+        $query = \App\Models\ExtractedPackage::query()
+            ->join('pricelists', 'extracted_packages.pricelist_id', '=', 'pricelists.id')
+            ->where('pricelists.status', 'processed')
+            ->where('extracted_packages.price', '>', 0)
+            ->where('extracted_packages.gb', '>', 0)
+            ->where('extracted_packages.yield_val', '>', 0);
+
+        $filenames = $request->input('filenames', []);
+        if (is_array($filenames) && count($filenames) > 0) {
+            $query->whereIn('pricelists.filename', $filenames);
+        }
+
+        if ($startDate) {
+            $query->where(function ($q) use ($startDate) {
+                $q->whereDate('extracted_packages.image_timestamp', '>=', $startDate)
+                  ->orWhere(function ($q2) use ($startDate) {
+                      $q2->whereNull('extracted_packages.image_timestamp')
+                         ->whereDate('pricelists.created_at', '>=', $startDate);
+                  });
+            });
+        }
+        if ($endDate) {
+            $query->where(function ($q) use ($endDate) {
+                $q->whereDate('extracted_packages.image_timestamp', '<=', $endDate)
+                  ->orWhere(function ($q2) use ($endDate) {
+                      $q2->whereNull('extracted_packages.image_timestamp')
+                         ->whereDate('pricelists.created_at', '<=', $endDate);
+                  });
+            });
+        }
+
+        $data = $query->selectRaw("
+            DATE(COALESCE(NULLIF(extracted_packages.image_timestamp, '')::timestamp, pricelists.created_at)) as trend_date,
+            extracted_packages.provider,
+            ROUND(AVG(extracted_packages.price), 0) as avg_price,
+            ROUND(AVG(extracted_packages.yield_val), 0) as avg_yield,
+            COUNT(*) as count,
+            ROUND(AVG(extracted_packages.gb), 1) as avg_gb
+        ")
+        ->groupBy('trend_date', 'extracted_packages.provider')
+        ->orderBy('trend_date')
+        ->get();
+
+        if ($data->isEmpty()) {
+            return response()->json([
+                'labels' => [],
+                'providers' => [],
+                'kpi' => [
+                    'total_packages' => 0,
+                    'total_scans' => 0,
+                    'avg_price' => 0,
+                    'avg_yield' => 0,
+                    'most_aggressive' => null,
+                ]
+            ]);
+        }
+
+        // Generate unique labels based on date
+        $data->transform(function ($item) {
+            $item->label_key = \Carbon\Carbon::parse($item->trend_date)->format('d M Y');
+            return $item;
+        });
+
+        $labels = $data->pluck('label_key')->unique()->values()->toArray();
+        $providerGroups = $data->groupBy('provider');
+
+        $providers = [];
+        foreach ($providerGroups as $providerName => $entries) {
+            $dateMap = $entries->keyBy('label_key');
+            $avgPrices = [];
+            $avgYields = [];
+            $counts = [];
+            $avgGbs = [];
+
+            foreach ($labels as $label) {
+                if (isset($dateMap[$label])) {
+                    $avgPrices[] = (float) $dateMap[$label]->avg_price;
+                    $avgYields[] = (float) $dateMap[$label]->avg_yield;
+                    $counts[] = (int) $dateMap[$label]->count;
+                    $avgGbs[] = (float) $dateMap[$label]->avg_gb;
+                } else {
+                    $avgPrices[] = null;
+                    $avgYields[] = null;
+                    $counts[] = 0;
+                    $avgGbs[] = null;
+                }
+            }
+
+            $providers[$providerName] = [
+                'avg_price' => $avgPrices,
+                'avg_yield' => $avgYields,
+                'count' => $counts,
+                'avg_gb' => $avgGbs,
+            ];
+        }
+
+        $totalPackages = $data->sum('count');
+        $overallAvgPrice = round($data->avg('avg_price'), 0);
+        $overallAvgYield = round($data->avg('avg_yield'), 0);
+        $totalScans = Pricelist::where('status', 'processed')->count();
+
+        $providerAvgYields = [];
+        foreach ($providerGroups as $providerName => $entries) {
+            $providerAvgYields[$providerName] = $entries->avg('avg_yield');
+        }
+        asort($providerAvgYields);
+        $mostAggressive = !empty($providerAvgYields) ? array_key_first($providerAvgYields) : null;
+
+        return response()->json([
+            'labels' => $labels,
+            'providers' => $providers,
+            'kpi' => [
+                'total_packages' => $totalPackages,
+                'total_scans' => $totalScans,
+                'avg_price' => $overallAvgPrice,
+                'avg_yield' => $overallAvgYield,
+                'most_aggressive' => $mostAggressive,
+            ]
+        ]);
     }
 
     public function aiInsight(Request $request)
@@ -850,5 +991,54 @@ class ScannerController extends Controller
         } catch (\Exception $e) {
             return response()->json(['error' => 'Terjadi kesalahan internal: ' . $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Multi-rule unlimited package detection.
+     */
+    private function isUnlimitedPackage(string $packageName, float $gb, int $days, int $price): bool
+    {
+        $nameLower = strtolower($packageName);
+
+        // Rule 1: By Name
+        if (str_contains($nameLower, 'unlimited') || str_contains($nameLower, 'unli') ||
+            str_contains($nameLower, 'tanpa batas') || str_contains($nameLower, 'nonstop')) {
+            return true;
+        }
+
+        // Rule 2: FUP harian indicator (low GB, long validity)
+        if ($days >= 28 && $gb <= 5 && $price > 0) {
+            $normalYield = $price / $gb;
+            if ($normalYield < 500) {
+                return true;
+            }
+        }
+
+        // Rule 3: Extreme yield anomaly for sachet
+        if ($days <= 7 && $gb > 0 && $price > 0) {
+            $normalYield = $price / $gb;
+            if ($normalYield < 50) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Calculate yield intelligently, handling unlimited packages.
+     */
+    public function calculateYield(string $packageName, float $gb, int $days, int $price): float
+    {
+        if ($gb <= 0 || $price <= 0) return 0;
+        
+        if ($this->isUnlimitedPackage($packageName, $gb, $days, $price)) {
+            if ($gb <= 5 && $days > 1) {
+                return ceil($price / ($gb * $days));
+            }
+            return ceil($price / $gb);
+        }
+        
+        return ceil($price / $gb);
     }
 }

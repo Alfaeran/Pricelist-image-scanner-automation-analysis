@@ -163,17 +163,17 @@ class ProcessPricelistJob implements ShouldQueue
                                 $price = (int) $pkg['price'];
                                 $gb = (float) $pkg['gb'];
                                 $days = (int) $pkg['days'];
-                                
+
+                                // Skip packages with zero/negative values (OCR errors)
+                                $isRejected = ($price <= 0 || $gb <= 0 || $days <= 0);
                                 $yield_val = 0;
                                 if (isset($pkg['yield_val'])) {
                                     $yield_val = $pkg['yield_val'];
                                 } else {
-                                    if (stripos($pkg['package_name'] ?? '', 'unlimited') !== false && $days > 0) {
-                                        $yield_val = $gb > 0 ? ceil($price / ($gb * $days)) : 0;
-                                    } else {
-                                        $yield_val = $gb > 0 ? ceil($price / $gb) : 0;
-                                    }
+                                    $yield_val = app(\App\Http\Controllers\ScannerController::class)->calculateYield($pkg['package_name'] ?? '', $gb, $days, $price);
                                 }
+                                
+                                $isAnomaly = ($price <= 0 || $gb <= 0 || $yield_val > 50000);
 
                                 ExtractedPackage::create([
                                     'pricelist_id' => $pricelist->id,
@@ -183,7 +183,8 @@ class ProcessPricelistJob implements ShouldQueue
                                     'gb' => $gb,
                                     'days' => $days,
                                     'yield_val' => $yield_val,
-                                    'category' => $this->categorize((int) $pkg['days'], (int) $pkg['price']),
+                                    'is_anomaly' => $isAnomaly,
+                                    'category' => $isRejected ? 'REJECTED' : $this->categorize((int) $pkg['days'], (int) $pkg['price']),
                                     'product_type' => $pkg['product_type'] ?? null,
                                     'image_timestamp' => $this->manualTimestamp ?? ($pkg['image_timestamp'] ?? null),
                                     'image_location' => $pkg['image_location'] ?? null,
@@ -346,6 +347,38 @@ class ProcessPricelistJob implements ShouldQueue
         return 'Bulanan (Standar)';
     }
 
+    /**
+     * Multi-rule unlimited package detection.
+     */
+    private function isUnlimitedPackage(string $packageName, float $gb, int $days, int $price): bool
+    {
+        $nameLower = strtolower($packageName);
+
+        // Rule 1: By Name
+        if (str_contains($nameLower, 'unlimited') || str_contains($nameLower, 'unli') ||
+            str_contains($nameLower, 'tanpa batas') || str_contains($nameLower, 'nonstop')) {
+            return true;
+        }
+
+        // Rule 2: FUP harian indicator (low GB, long validity)
+        if ($days >= 28 && $gb <= 5 && $price > 0) {
+            $normalYield = $price / $gb;
+            if ($normalYield > 10000) {
+                return true;
+            }
+        }
+
+        // Rule 3: Extreme yield anomaly for sachet
+        if ($days <= 7 && $gb > 0 && $price > 0) {
+            $normalYield = $price / $gb;
+            if ($normalYield > 10000) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private function processDataFile(string $fullPath, Pricelist $pricelist): void
     {
         $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
@@ -390,7 +423,8 @@ class ProcessPricelistJob implements ShouldQueue
                 'price' => $price,
                 'gb' => $gb,
                 'days' => $days,
-                'yield_val' => $gb > 0 ? ceil($price / $gb) : 0,
+                'yield_val' => app(\App\Http\Controllers\ScannerController::class)->calculateYield("Paket " . $provider, $gb, $days, $price),
+                'is_anomaly' => ($price <= 0 || $gb <= 0 || (app(\App\Http\Controllers\ScannerController::class)->calculateYield("Paket " . $provider, $gb, $days, $price)) > 50000),
                 'category' => $this->categorize($days, $price),
                 'product_type' => 'Data',
                 'image_timestamp' => $this->manualTimestamp,

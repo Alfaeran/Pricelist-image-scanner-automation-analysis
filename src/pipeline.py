@@ -78,10 +78,7 @@ ATURAN:
 - Konversi harga: K = ribuan (37K -> 37000). Abaikan "Rp", titik, spasi.
 - `package_name`: Ambil nama paket yang biasanya ada di atas banner atau di samping logo brand (misal: "Smartfren Unlimited", "Freedom Internet"). Jika tidak ada, kosongkan string "".
 - UNTUK PAKET UNLIMITED (FUP per hari): Tuliskan kuota harian di kolom `gb` (misal 2GB/hari, tulis gb: 2.0). JANGAN dikalikan dengan jumlah hari, karena sistem akan menghitungnya secara otomatis. Jika paket biasa, tulis total GB-nya.
-- KOREKSI POLA (PRIOR KNOWLEDGE): 
-  - SMARTFREN: Sering terjadi kesalahan baca. Smartfren 44K/45K biasanya 10GB (bukan 280GB). 62K biasanya 24GB. 81K biasanya 40GB. 130K biasanya 100GB.
-  - IM3 / INDOSAT: Perhatikan baik-baik baris harga dan GB agar tidak tertukar/offset. Harga 38K=7GB, 46K=9GB, 51K=16GB, 61K=24GB, 68K/71K=26GB/30GB, 81K=40GB, 103K=65GB. Pastikan membaca dalam baris yang sama.
-  - AXIS: 25K biasanya 30GB, BUKAN 3GB.
+{LEARNED_PATTERNS_PLACEHOLDER}
 - price: integer, gb: float, days: integer
 - Abaikan baris jika price, gb, atau days kosong
 - Abaikan watermark, botol, rak, orang, dan objek non-data
@@ -284,7 +281,22 @@ def extract_packages_gemini(
     from google.genai import types
 
     import time
+    import requests
     
+    # Fetch learned patterns from Laravel API
+    learned_patterns_text = ""
+    try:
+        resp = requests.get("http://127.0.0.1:8000/api/learned-patterns", timeout=3)
+        if resp.status_code == 200:
+            patterns = resp.json().get('data', [])
+            if patterns:
+                learned_patterns_text = "- KOREKSI POLA (PRIOR KNOWLEDGE):\n"
+                for p in patterns:
+                    learned_patterns_text += f"  - {p['provider']}: {p['rule_text']}\n"
+    except Exception as e:
+        if on_status:
+            on_status(f"Warning: Gagal mengambil learned patterns dari API ({e})")
+            
     current_key_idx = 0
     all_extracted_data = []
 
@@ -303,7 +315,7 @@ def extract_packages_gemini(
                 client = genai.Client(api_key=api_keys[current_key_idx])
 
                 # Build final prompt
-                final_prompt = EXTRACTION_PROMPT
+                final_prompt = EXTRACTION_PROMPT.replace("{LEARNED_PATTERNS_PLACEHOLDER}", learned_patterns_text)
                 if custom_prompt and custom_prompt.strip() and custom_prompt.strip() != "Tolong scan gambar ini.":
                     final_prompt = f"{final_prompt}\n\nINSTRUKSI TAMBAHAN DARI USER:\n{custom_prompt.strip()}"
                     
@@ -364,12 +376,35 @@ def extract_packages_gemini(
 # 4. Post-Processing (from notebook cells 280-432)
 # ══════════════════════════════════════════════════════════════════════════════
 
+def is_unlimited_package(price: float, gb: float, days: int, package_name: str) -> bool:
+    """Detect unlimited packages using multiple heuristic rules."""
+    name_lower = str(package_name).lower()
+    
+    # Rule 1: By Name
+    if any(keyword in name_lower for keyword in ['unlimited', 'unli', 'tanpa batas', 'nonstop']):
+        return True
+    
+    # Rule 2: FUP harian indicator (low GB, long validity)
+    if days >= 28 and gb <= 5 and price > 0:
+        normal_yield = price / gb
+        if normal_yield < 500:
+            return True
+    
+    # Rule 3: Extreme yield anomaly for sachet
+    if days <= 7 and gb > 0 and price > 0:
+        normal_yield = price / gb
+        if normal_yield < 50:
+            return True
+    
+    return False
+
+
 def compute_yield(price: float, gb: float, days: int, package_name: str) -> int:
     """Compute yield. For unlimited: yield = ceil(price / (gb * days)). Otherwise: yield = ceil(price / gb)."""
-    if gb <= 0:
+    if gb <= 0 or price <= 0:
         return 0
     
-    if "unlimited" in str(package_name).lower() and days > 0:
+    if is_unlimited_package(price, gb, days, package_name) and days > 0:
         val = price / (gb * days)
     else:
         val = price / gb
@@ -431,6 +466,9 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
     # Drop rows with missing critical data
     df = df.dropna(subset=["price", "gb", "days"])
+
+    # Drop rows with zero/negative values (OCR errors)
+    df = df[(df["price"] > 0) & (df["gb"] > 0) & (df["days"] > 0)]
 
     # Cast to proper types
     df["price"] = df["price"].astype(int)

@@ -4,7 +4,6 @@ use App\Http\Controllers\ProfileController;
 use App\Http\Controllers\ApiKeyController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\ScannerController;
-use App\Http\Controllers\VlrController;
 use Illuminate\Foundation\Application;
 use Illuminate\Support\Facades\Route;
 use Inertia\Inertia;
@@ -54,12 +53,16 @@ Route::middleware(['auth', 'verified'])->group(function () {
     Route::post('/scanner/{pricelist}/sync-csv', [ScannerController::class, 'syncCsv'])->name('scanner.syncCsv');
     Route::post('/api/scanner/{pricelist}/status', [ScannerController::class, 'updateStatus'])->name('scanner.status.update')->withoutMiddleware(['auth', 'verified']);
 
-    // VLR Checker
-    Route::get('/vlr-checker', [VlrController::class, 'index'])->name('vlr.index');
-    Route::post('/vlr-checker/check', [VlrController::class, 'check'])->name('vlr.check');
-
     // AI Insight
     Route::post('/api/scanner/ai-insight', [ScannerController::class, 'aiInsight'])->name('scanner.aiInsight');
+
+    // Learned Patterns API for Python
+    Route::get('/api/learned-patterns', function () {
+        $patterns = \App\Models\LearnedPattern::where('is_active', true)
+                        ->orderBy('id', 'asc')
+                        ->get(['provider', 'rule_text']);
+        return response()->json(['status' => 'success', 'data' => $patterns]);
+    })->name('api.learned-patterns')->withoutMiddleware(['auth', 'verified']);
 
     // API Key management
     Route::get('/api/keys', [ApiKeyController::class, 'index'])->name('apikeys.index');

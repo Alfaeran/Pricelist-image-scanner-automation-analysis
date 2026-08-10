@@ -1,3 +1,23 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+    :root {
+        --color-primary: 255 212 0; /* #ffd400 */
+        --color-secondary: 254 2 29; /* #fe021d */
+    }
+
+    .dark {
+        --color-primary: 4 16 55; /* #041037 Dark Deep Sea Blue */
+        --color-secondary: 255 0 255; /* #ff00ff Magenta */
+    }
+}
+
+@font-face {
+    font-family: 'Ooredoo';
+    src: url('/fonts/Ooredoo-Heavy.ttf') format('truetype');
+    font-weight: normal;
+    font-style: normal;
+    font-display: swap;
+}
