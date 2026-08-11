@@ -14,7 +14,7 @@ export default {
     theme: {
         extend: {
             fontFamily: {
-                sans: ['Inter', ...defaultTheme.fontFamily.sans],
+                sans: ['Ooredoo', ...defaultTheme.fontFamily.sans],
             },
             colors: {
                 theme: {

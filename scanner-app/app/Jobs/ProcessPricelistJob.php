@@ -309,16 +309,6 @@ class ProcessPricelistJob implements ShouldQueue
         }
     }
 
-    private function getHealthyApiKey(): ?ApiKey
-    {
-        return ApiKey::where('is_active', true)
-            ->where(function ($query) {
-                $query->whereNull('cooldown_until')
-                    ->orWhere('cooldown_until', '<', now());
-            })
-            ->orderBy('usage_count', 'asc')
-            ->first();
-    }
 
     private function failPermanently(string $message): void
     {
@@ -345,38 +335,6 @@ class ProcessPricelistJob implements ShouldQueue
         if ($price > 100000)
             return 'Bulanan (Premium/Jumbo)';
         return 'Bulanan (Standar)';
-    }
-
-    /**
-     * Multi-rule unlimited package detection.
-     */
-    private function isUnlimitedPackage(string $packageName, float $gb, int $days, int $price): bool
-    {
-        $nameLower = strtolower($packageName);
-
-        // Rule 1: By Name
-        if (str_contains($nameLower, 'unlimited') || str_contains($nameLower, 'unli') ||
-            str_contains($nameLower, 'tanpa batas') || str_contains($nameLower, 'nonstop')) {
-            return true;
-        }
-
-        // Rule 2: FUP harian indicator (low GB, long validity)
-        if ($days >= 28 && $gb <= 5 && $price > 0) {
-            $normalYield = $price / $gb;
-            if ($normalYield > 10000) {
-                return true;
-            }
-        }
-
-        // Rule 3: Extreme yield anomaly for sachet
-        if ($days <= 7 && $gb > 0 && $price > 0) {
-            $normalYield = $price / $gb;
-            if ($normalYield > 10000) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private function processDataFile(string $fullPath, Pricelist $pricelist): void

@@ -814,7 +814,7 @@ class ScannerController extends Controller
         }
 
         $data = $query->selectRaw("
-            DATE(COALESCE(NULLIF(extracted_packages.image_timestamp, ''), pricelists.created_at)) as trend_date,
+            DATE(COALESCE(NULLIF(extracted_packages.image_timestamp, ''), CAST(pricelists.created_at AS TEXT))) as trend_date,
             extracted_packages.provider,
             ROUND(AVG(extracted_packages.price), 0) as avg_price,
             ROUND(AVG(extracted_packages.yield_val), 0) as avg_yield,
@@ -994,30 +994,49 @@ class ScannerController extends Controller
     }
 
     /**
+     * Ambang batas yield (Rp/GB) yang masih wajar untuk paket kuota kecil dengan masa aktif
+     * cukup panjang. Di atas ini, kombinasi "GB kecil + masa aktif panjang + harga segini"
+     * jauh lebih masuk akal dibaca sebagai kuota HARIAN (FUP), bukan kuota total.
+     * DEFAULT — validasi ulang terhadap dataset riil sebelum dipakai di produksi.
+     */
+    private const MAX_PLAUSIBLE_YIELD_SMALL_LONG_VALIDITY = 30000; // Rp/GB
+
+    /**
+     * Ambang batas bawah untuk anomali sebaliknya pada paket masa aktif pendek (sachet/harian):
+     * yield yang mustahil murah biasanya berarti GB yang tercatat juga sebenarnya kuota harian.
+     */
+    private const MIN_PLAUSIBLE_YIELD_SHORT_VALIDITY = 50; // Rp/GB
+
+    /**
      * Multi-rule unlimited package detection.
      */
     private function isUnlimitedPackage(string $packageName, float $gb, int $days, int $price): bool
     {
         $nameLower = strtolower($packageName);
 
-        // Rule 1: By Name
+        // Rule 1: By Name (keyword matching)
         if (str_contains($nameLower, 'unlimited') || str_contains($nameLower, 'unli') ||
-            str_contains($nameLower, 'tanpa batas') || str_contains($nameLower, 'nonstop')) {
+            str_contains($nameLower, 'tanpa batas') || str_contains($nameLower, 'nonstop') ||
+            str_contains($nameLower, 'fup')) {
             return true;
         }
 
-        // Rule 2: FUP harian indicator (low GB, long validity)
-        if ($days >= 28 && $gb <= 5 && $price > 0) {
-            $normalYield = $price / $gb;
-            if ($normalYield < 500) {
+        // Rule 2 (DIPERBAIKI): Deteksi FUP harian berdasarkan anomali yield.
+        // Dulu arah perbandingannya terbalik (< 500, gak pernah kena di data nyata).
+        // Sekarang: masa aktif >= 7 hari + GB kecil + naive yield JAUH LEBIH MAHAL
+        // dari batas wajar => kemungkinan besar kuota harian, bukan total.
+        if ($days >= 7 && $gb > 0 && $gb <= 5 && $price > 0) {
+            $naiveYield = $price / $gb;
+            if ($naiveYield > self::MAX_PLAUSIBLE_YIELD_SMALL_LONG_VALIDITY) {
                 return true;
             }
         }
 
-        // Rule 3: Extreme yield anomaly for sachet
+        // Rule 3: Anomali sebaliknya untuk paket sachet/harian (masa aktif pendek) —
+        // yield yang mustahil murah mengindikasikan GB yang tercatat bukan kuota total.
         if ($days <= 7 && $gb > 0 && $price > 0) {
-            $normalYield = $price / $gb;
-            if ($normalYield < 50) {
+            $naiveYield = $price / $gb;
+            if ($naiveYield < self::MIN_PLAUSIBLE_YIELD_SHORT_VALIDITY) {
                 return true;
             }
         }

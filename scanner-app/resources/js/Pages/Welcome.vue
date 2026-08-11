@@ -58,7 +58,7 @@ function handleImageError() {
                         <Link
                             v-if="$page.props.auth.user"
                             :href="route('dashboard')"
-                            class="rounded-md px-3 py-2 text-black ring-1 ring-transparent transition hover:text-black/70 focus:outline-none focus-visible:ring-[#FF2D20] dark:text-white dark:hover:text-white/80 dark:focus-visible:ring-white"
+                            class="rounded-md px-3 py-2 text-black ring-1 ring-transparent transition hover:text-black/70 focus:outline-none focus-visible:ring-[#FF2D20] dark:text-slate-900 dark:hover:text-white/80 dark:focus-visible:ring-white"
                         >
                             Dashboard
                         </Link>
@@ -66,7 +66,7 @@ function handleImageError() {
                         <template v-else>
                             <Link
                                 :href="route('login')"
-                                class="rounded-md px-3 py-2 text-black ring-1 ring-transparent transition hover:text-black/70 focus:outline-none focus-visible:ring-[#FF2D20] dark:text-white dark:hover:text-white/80 dark:focus-visible:ring-white"
+                                class="rounded-md px-3 py-2 text-black ring-1 ring-transparent transition hover:text-black/70 focus:outline-none focus-visible:ring-[#FF2D20] dark:text-slate-900 dark:hover:text-white/80 dark:focus-visible:ring-white"
                             >
                                 Log in
                             </Link>
@@ -74,7 +74,7 @@ function handleImageError() {
                             <Link
                                 v-if="canRegister"
                                 :href="route('register')"
-                                class="rounded-md px-3 py-2 text-black ring-1 ring-transparent transition hover:text-black/70 focus:outline-none focus-visible:ring-[#FF2D20] dark:text-white dark:hover:text-white/80 dark:focus-visible:ring-white"
+                                class="rounded-md px-3 py-2 text-black ring-1 ring-transparent transition hover:text-black/70 focus:outline-none focus-visible:ring-[#FF2D20] dark:text-slate-900 dark:hover:text-white/80 dark:focus-visible:ring-white"
                             >
                                 Register
                             </Link>
@@ -138,7 +138,7 @@ function handleImageError() {
 
                                     <div class="pt-3 sm:pt-5 lg:pt-0">
                                         <h2
-                                            class="text-xl font-semibold text-black dark:text-white"
+                                            class="text-xl font-semibold text-black dark:text-slate-900"
                                         >
                                             Documentation
                                         </h2>
@@ -194,7 +194,7 @@ function handleImageError() {
 
                             <div class="pt-3 sm:pt-5">
                                 <h2
-                                    class="text-xl font-semibold text-black dark:text-white"
+                                    class="text-xl font-semibold text-black dark:text-slate-900"
                                 >
                                     Laracasts
                                 </h2>
@@ -252,7 +252,7 @@ function handleImageError() {
 
                             <div class="pt-3 sm:pt-5">
                                 <h2
-                                    class="text-xl font-semibold text-black dark:text-white"
+                                    class="text-xl font-semibold text-black dark:text-slate-900"
                                 >
                                     Laravel News
                                 </h2>
@@ -303,7 +303,7 @@ function handleImageError() {
 
                             <div class="pt-3 sm:pt-5">
                                 <h2
-                                    class="text-xl font-semibold text-black dark:text-white"
+                                    class="text-xl font-semibold text-black dark:text-slate-900"
                                 >
                                     Vibrant Ecosystem
                                 </h2>
@@ -376,7 +376,7 @@ function handleImageError() {
                 </main>
 
                 <footer
-                    class="py-16 text-center text-sm text-black dark:text-white/70"
+                    class="py-16 text-center text-sm text-black dark:text-slate-900/70"
                 >
                     Laravel v{{ laravelVersion }} (PHP v{{ phpVersion }})
                 </footer>

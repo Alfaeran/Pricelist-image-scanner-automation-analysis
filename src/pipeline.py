@@ -376,24 +376,36 @@ def extract_packages_gemini(
 # 4. Post-Processing (from notebook cells 280-432)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Ambang batas yield (Rp/GB) yang masih wajar untuk paket kuota kecil + masa aktif panjang.
+# Di atas ini, kemungkinan besar kuota harian (FUP), bukan total.
+MAX_PLAUSIBLE_YIELD_SMALL_LONG_VALIDITY = 30_000  # Rp/GB
+
+# Ambang batas bawah untuk anomali sebaliknya pada paket sachet/harian.
+MIN_PLAUSIBLE_YIELD_SHORT_VALIDITY = 50  # Rp/GB
+
+
 def is_unlimited_package(price: float, gb: float, days: int, package_name: str) -> bool:
     """Detect unlimited packages using multiple heuristic rules."""
     name_lower = str(package_name).lower()
     
-    # Rule 1: By Name
-    if any(keyword in name_lower for keyword in ['unlimited', 'unli', 'tanpa batas', 'nonstop']):
+    # Rule 1: By Name (keyword matching, + 'fup' ditambahkan)
+    if any(keyword in name_lower for keyword in ['unlimited', 'unli', 'tanpa batas', 'nonstop', 'fup']):
         return True
     
-    # Rule 2: FUP harian indicator (low GB, long validity)
-    if days >= 28 and gb <= 5 and price > 0:
-        normal_yield = price / gb
-        if normal_yield < 500:
+    # Rule 2 (DIPERBAIKI): Deteksi FUP harian berdasarkan anomali yield.
+    # Dulu arah perbandingannya terbalik (< 500, gak pernah kena di data nyata).
+    # Sekarang: masa aktif >= 7 hari + GB kecil + naive yield JAUH LEBIH MAHAL
+    # dari batas wajar => kemungkinan besar kuota harian, bukan total.
+    if days >= 7 and gb > 0 and gb <= 5 and price > 0:
+        naive_yield = price / gb
+        if naive_yield > MAX_PLAUSIBLE_YIELD_SMALL_LONG_VALIDITY:
             return True
     
-    # Rule 3: Extreme yield anomaly for sachet
+    # Rule 3: Anomali sebaliknya untuk paket sachet/harian (masa aktif pendek) —
+    # yield yang mustahil murah mengindikasikan GB yang tercatat bukan kuota total.
     if days <= 7 and gb > 0 and price > 0:
-        normal_yield = price / gb
-        if normal_yield < 50:
+        naive_yield = price / gb
+        if naive_yield < MIN_PLAUSIBLE_YIELD_SHORT_VALIDITY:
             return True
     
     return False
