@@ -116,6 +116,21 @@ const trendLoading = ref(false);
 const trendFiles = ref([]);
 const isTrendFileFilterOpen = ref(false);
 const marketSummaryFilter = ref('all');
+const trendHiddenProviders = ref([]);
+
+const toggleTrendProvider = (prov) => {
+    const idx = trendHiddenProviders.value.indexOf(prov);
+    if (idx > -1) {
+        trendHiddenProviders.value.splice(idx, 1);
+    } else {
+        trendHiddenProviders.value.push(prov);
+    }
+};
+
+const trendProviders = computed(() => {
+    if (!trendRawData.value || !trendRawData.value.providers) return [];
+    return Object.keys(trendRawData.value.providers).sort();
+});
 
 // --- Anime.js Utils ---
 let loadingAnim = null;
@@ -190,13 +205,13 @@ onMounted(() => {
 });
 const getProviderColor = (providerName) => {
     const prov = providerName.toUpperCase();
-    if (prov === '3' || prov.includes('TRI')) return '#D6005E';
-    if (prov.includes('AXIS')) return '#6F2B8C';
-    if (prov.includes('XL')) return '#0B2F75';
-    if (prov.includes('BY.U') || prov.includes('BYU')) return '#00B6ED';
-    if (prov.includes('TELKOMSEL') || prov.includes('TSEL')) return '#E60A14';
-    if (prov.includes('SMARTFREN') || prov.includes('SF')) return '#D1006B';
-    if (prov.includes('INDOSAT') || prov.includes('IM3')) return '#FCD116';
+    if (prov === '3' || prov.includes('TRI')) return '#4F46E5'; // Indigo-600
+    if (prov.includes('AXIS')) return '#9333EA'; // Purple-600
+    if (prov.includes('XL')) return '#2563EB'; // Blue-600
+    if (prov.includes('BY.U') || prov.includes('BYU')) return '#EA580C'; // Orange-600
+    if (prov.includes('TELKOMSEL') || prov.includes('TSEL')) return '#DC2626'; // Red-600
+    if (prov.includes('SMARTFREN') || prov.includes('SF')) return '#DB2777'; // Pink-600
+    if (prov.includes('INDOSAT') || prov.includes('IM3')) return '#F59E0B'; // Amber-500
     
     // Hash string to color for unknown providers
     let hash = 0;
@@ -218,6 +233,8 @@ const trendChartData = computed(() => {
     const datasets = [];
     
     for (const [provider, data] of Object.entries(trendRawData.value.providers)) {
+        if (trendHiddenProviders.value.includes(provider)) continue;
+        
         datasets.push({
             label: provider,
             backgroundColor: getProviderColor(provider) + 'CC', // add transparency
@@ -241,6 +258,7 @@ const trendChartOptions = {
     maintainAspectRatio: false,
     plugins: {
         legend: {
+            display: false,
             position: 'bottom',
             labels: {
                 color: '#9CA3AF',
@@ -251,11 +269,13 @@ const trendChartOptions = {
         tooltip: {
             mode: 'index',
             intersect: false,
-            backgroundColor: 'rgba(17, 24, 39, 0.9)',
-            titleColor: '#fff',
-            bodyColor: '#e5e7eb',
-            borderColor: 'rgba(75, 85, 99, 0.5)',
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            titleColor: '#1e293b',
+            bodyColor: '#475569',
+            borderColor: '#e2e8f0',
             borderWidth: 1,
+            titleFont: { family: "'Inter', sans-serif", size: 13 },
+            bodyFont: { family: "'Inter', sans-serif", size: 12 },
             callbacks: {
                 label: function(context) {
                     let label = context.dataset.label || '';
@@ -279,20 +299,20 @@ const trendChartOptions = {
     scales: {
         x: {
             grid: {
-                color: 'rgba(75, 85, 99, 0.2)',
+                color: '#f1f5f9',
                 drawBorder: false
             },
             ticks: {
-                color: '#9CA3AF'
+                color: '#64748b'
             }
         },
         y: {
             grid: {
-                color: 'rgba(75, 85, 99, 0.2)',
+                color: '#f1f5f9',
                 drawBorder: false
             },
             ticks: {
-                color: '#9CA3AF',
+                color: '#64748b',
                 callback: function(value) {
                     if (trendMetric.value === 'avg_price') return 'Rp' + (value / 1000) + 'k';
                     if (trendMetric.value === 'avg_yield') return 'Rp' + value;
@@ -1085,23 +1105,23 @@ const insightChartOptions = {
         tooltip: {
             mode: 'index',
             intersect: false,
-            backgroundColor: 'rgba(30, 30, 32, 0.9)',
-            titleColor: '#fff',
-            bodyColor: '#ccc',
-            borderColor: '#374151',
+            backgroundColor: 'rgba(255, 255, 255, 0.95)',
+            titleColor: '#1e293b',
+            bodyColor: '#475569',
+            borderColor: '#e2e8f0',
             borderWidth: 1
         }
     },
     scales: {
         y: {
-            border: { display: true, color: '#4b5563', width: 1 },
-            grid: { display: false },
-            ticks: { color: '#9ca3af', font: { family: "'Inter', sans-serif", size: 10 } }
+            border: { display: false },
+            grid: { display: true, color: '#f1f5f9' },
+            ticks: { color: '#64748b', font: { family: "'Inter', sans-serif", size: 10 } }
         },
         x: {
-            border: { display: true, color: '#4b5563', width: 1 },
+            border: { display: false },
             grid: { display: false },
-            ticks: { color: '#9ca3af', font: { family: "'Inter', sans-serif", size: 10 }, maxRotation: 45, minRotation: 0 }
+            ticks: { color: '#64748b', font: { family: "'Inter', sans-serif", size: 10 }, maxRotation: 45, minRotation: 0 }
         }
     }
 };
@@ -2242,31 +2262,29 @@ onUnmounted(() => {
 <template>
     <Head title="VIPER" />
     <!-- Anime.js Global Loading Bar -->
-    <div id="global-loader" class="fixed top-0 left-0 h-1 bg-secondary z-50 w-0"></div>
+    <div id="global-loader" class="fixed top-0 left-0 h-1 bg-theme-brand-primary z-50 w-0"></div>
     <div
-        class="h-screen flex bg-primary text-slate-900 dark:text-white font-sans overflow-hidden transition-colors duration-200"
+        class="h-screen flex bg-theme-page text-theme-text-primary font-sans overflow-hidden transition-colors duration-200"
     >
         <!-- SIDEBAR -->
         <div
             :class="sidebarOpen ? 'w-72' : 'w-0 opacity-0'"
-            class="flex-shrink-0 bg-primary flex flex-col transition-all duration-300 overflow-hidden border-r border-black dark:border-slate-700 shadow-sm"
+            class="flex-shrink-0 bg-theme-brand-primary text-white flex flex-col transition-all duration-300 overflow-hidden border-r border-theme-brand-primary shadow-sm"
         >
             <div
-                class="p-4 border-b border-black dark:border-slate-700 flex items-center justify-between"
+                class="h-16 px-4 border-b border-white/10 flex items-center justify-between shrink-0"
             >
                 <div class="flex items-center gap-2">
                     <!-- Viper snake SVG -->
-                    <svg class="w-6 h-6 text-slate-900 dark:text-white" viewBox="0 0 24 24" fill="currentColor">
+                    <svg class="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
                         <path d="M12 2C8.13 2 5 5.13 5 9c0 1.96.8 3.73 2.1 5.02L9.5 16.5v2C9.5 19.88 10.62 21 12 21s2.5-1.12 2.5-2.5v-2l2.4-2.48C18.2 12.73 19 10.96 19 9c0-3.87-3.13-7-7-7zm0 2c2.76 0 5 2.24 5 5 0 1.34-.55 2.57-1.45 3.48L13 15.05v3.45c0 .55-.45 1-1 1s-1-.45-1-1v-3.45l-2.55-2.57C7.55 11.57 7 10.34 7 9c0-2.76 2.24-5 5-5zm-2 3.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/>
                     </svg>
-                    <h2
-                        class="text-xl font-extrabold text-slate-900 dark:text-white"
-                    >
+                    <h2 class="text-xl font-bold text-white tracking-wide">
                         VIPER
                     </h2>
                 </div>
                 <div class="flex items-center space-x-1">
-                    <button @click="toggleDarkMode" aria-label="Toggle Dark Mode" class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition text-slate-500 dark:text-white hover:text-slate-800 dark:hover:text-slate-200 active:scale-[0.98] transition-transform">
+                    <button @click="toggleDarkMode" aria-label="Toggle Dark Mode" class="p-1 hover:bg-white/10 rounded-lg transition text-white/70 hover:text-white active:scale-[0.98] transition-transform">
                         <svg v-if="isDark" xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
                         </svg>
@@ -2276,7 +2294,7 @@ onUnmounted(() => {
                     </button>
                     <button
                         @click="sidebarOpen = false"
-                        class="p-1 hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg transition text-slate-500 dark:text-white hover:text-slate-800 dark:hover:text-slate-200 active:scale-[0.98] transition-transform"
+                        class="p-1 hover:bg-white/10 rounded-lg transition text-white/70 hover:text-white active:scale-[0.98] transition-transform"
                     >
                         <svg
                         class="w-5 h-5"
@@ -2297,7 +2315,7 @@ onUnmounted(() => {
             <!-- Status & Input API Key -->
             <div class="p-3 border-b border-slate-200/80 dark:border-slate-700 space-y-4">
                 <!-- Status Usage -->
-                <div class="bg-secondary rounded-xl p-3 shadow-lg shadow-secondary/30">
+                <div class="bg-white/5 rounded-xl p-3 border border-white/10">
                     <div class="text-xs text-white mb-1 font-semibold">
                         Kapasitas Model
                     </div>
@@ -2340,17 +2358,17 @@ onUnmounted(() => {
                         v-model="newKeyInput"
                         type="password"
                         placeholder="Masukkan API Key Gemini..."
-                        class="w-full bg-white border border-slate-300 rounded-lg px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                        class="w-full bg-white/10 border border-white/20 rounded-lg px-3 py-2 text-xs text-white placeholder-white/50 focus:outline-none focus:border-theme-brand-secondary focus:ring-1 focus:ring-theme-brand-secondary transition"
                         required
                     />
                     <button
                         type="submit"
                         :disabled="keyLoading"
-                        class="bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 rounded-lg px-3 py-2 transition flex items-center justify-center shrink-0 disabled:opacity-50 dark:text-white active:scale-[0.98] transition-transform"
+                        class="bg-white/10 hover:bg-white/20 border border-white/20 text-white rounded-lg px-3 py-2 transition flex items-center justify-center shrink-0 disabled:opacity-50 active:scale-[0.98] transition-transform"
                     >
                         <svg
                             v-if="keyLoading"
-                            class="w-4 h-4 animate-spin text-blue-600"
+                            class="w-4 h-4 animate-spin text-white"
                             fill="none"
                             viewBox="0 0 24 24"
                         >
@@ -2370,7 +2388,7 @@ onUnmounted(() => {
                         </svg>
                         <svg
                             v-else
-                            class="w-4 h-4 text-blue-600"
+                            class="w-4 h-4 text-white"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -2387,7 +2405,7 @@ onUnmounted(() => {
 
                 <button
                     @click="newChat"
-                    class="w-full flex items-center justify-center gap-2 px-4 py-2.5 bg-secondary hover:bg-[#d90017] text-white text-sm font-medium rounded-lg transition border border-secondary shadow-sm shadow-secondary/20 active:scale-[0.98] transition-transform"
+                    class="w-full flex items-center justify-center gap-2 px-4 py-2 bg-theme-brand-secondary hover:bg-theme-brand-secondary/90 text-white text-sm font-medium rounded-lg transition active:scale-[0.98] transition-transform"
                 >
                     <svg
                         class="w-4 h-4"
@@ -2411,7 +2429,7 @@ onUnmounted(() => {
                 class="flex-1 overflow-y-auto px-3 pb-4 space-y-1 custom-scrollbar"
             >
                 <div
-                    class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-2 mt-4 px-2 dark:text-white"
+                    class="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2 mt-4 px-2"
                 >
                     Terbaru
                 </div>
@@ -2422,14 +2440,15 @@ onUnmounted(() => {
                     class="sidebar-item group flex items-center justify-between p-2 rounded-lg cursor-pointer transition text-sm opacity-0"
                     :class="
                         activeSessionId === list.id
-                            ? 'bg-white/80 border border-white text-slate-900 font-bold shadow-sm'
-                            : 'text-slate-700 dark:text-white hover:bg-white/40 hover:text-slate-900 dark:hover:text-slate-900'
+                            ? 'bg-theme-brand-accent/20 text-white font-medium border-l-2 border-theme-brand-accent shadow-sm'
+                            : 'text-white/70 hover:bg-white/10 hover:text-white border-l-2 border-transparent'
                     "
                     @click="activeSessionId = list.id"
                 >
                     <div class="flex items-center gap-3 overflow-hidden flex-1">
                         <svg
-                            class="w-4 h-4 text-slate-700 shrink-0 dark:text-white"
+                            class="w-4 h-4 shrink-0"
+                            :class="activeSessionId === list.id ? 'text-white' : 'text-white/50'"
                             fill="none"
                             stroke="currentColor"
                             viewBox="0 0 24 24"
@@ -2460,7 +2479,7 @@ onUnmounted(() => {
                     >
                         <button
                             @click.stop="startRename(list)"
-                            class="p-1 hover:bg-slate-200 rounded text-slate-400 hover:text-slate-700 dark:text-white active:scale-[0.98] transition-transform"
+                            class="p-1 hover:bg-white/20 rounded text-white/50 hover:text-white active:scale-[0.98] transition-transform"
                             title="Rename"
                         >
                             <svg
@@ -2479,7 +2498,7 @@ onUnmounted(() => {
                         </button>
                         <button
                             @click.stop="deleteSession(list.id)"
-                            class="p-1 hover:bg-red-100 rounded text-slate-400 hover:text-red-600 dark:text-white active:scale-[0.98] transition-transform"
+                            class="p-1 hover:bg-semantic-danger/20 rounded text-white/50 hover:text-semantic-danger active:scale-[0.98] transition-transform"
                             title="Delete"
                         >
                             <svg
@@ -2501,23 +2520,23 @@ onUnmounted(() => {
             </div>
 
             <div
-                class="p-4 border-t border-black text-xs text-slate-600 dark:text-white flex justify-between items-center bg-primary"
+                class="p-4 border-t border-white/10 text-xs text-white/60 flex justify-between items-center bg-primary"
             >
-                <span class="dark:text-white">API Keys: {{ activeKeyCount }} active</span>
-                <span title="Total Usage" class="dark:text-white">{{ totalUsage }} reqs</span>
+                <span>API Keys: {{ activeKeyCount }} active</span>
+                <span title="Total Usage">{{ totalUsage }} reqs</span>
             </div>
         </div>
 
         <!-- MAIN AREA -->
-        <div class="flex-1 flex flex-col h-screen relative bg-primary transition-colors duration-200">
+        <div class="flex-1 flex flex-col h-screen relative bg-theme-page transition-colors duration-200">
             <!-- Topbar (Mobile Hamburger) -->
             <div
-                class="h-14 flex items-center px-4 border-b border-black dark:border-slate-700 shrink-0 bg-primary/90 backdrop-blur"
+                class="h-16 flex items-center px-4 border-b border-theme-border-subtle shrink-0 bg-theme-surface"
             >
                 <button
                     v-if="!sidebarOpen"
                     @click="sidebarOpen = true"
-                    class="p-2 hover:bg-slate-100 rounded-lg text-slate-600 transition dark:text-white active:scale-[0.98] transition-transform"
+                    class="p-2 hover:bg-black/5 dark:hover:bg-white/10 rounded-lg text-theme-text-secondary transition hover:text-theme-text-primary active:scale-[0.98] transition-transform"
                 >
                     <svg
                         class="w-5 h-5"
@@ -2536,7 +2555,7 @@ onUnmounted(() => {
                 <div class="ml-auto flex items-center gap-2">
                     <span
                         v-if="activeSession"
-                        class="text-sm text-slate-700 font-medium dark:text-white"
+                        class="text-sm text-theme-text-primary font-medium"
                         >{{ activeSession.filename }}</span
                     >
                 </div>
@@ -2554,29 +2573,29 @@ onUnmounted(() => {
                     >
                         <div class="text-center mb-8">
                             <h1
-                                class="text-4xl font-extrabold mb-2 text-slate-900 dark:text-white tracking-tight flex justify-center items-center gap-3"
+                                class="text-4xl font-extrabold mb-2 text-theme-text-primary tracking-tight flex justify-center items-center gap-3"
                             >
-                                <svg class="w-10 h-10 text-slate-900 dark:text-indigo-400" viewBox="0 0 24 24" fill="currentColor">
+                                <svg class="w-10 h-10 text-theme-brand-primary dark:text-theme-brand-secondary" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M12 2C8.13 2 5 5.13 5 9c0 1.96.8 3.73 2.1 5.02L9.5 16.5v2C9.5 19.88 10.62 21 12 21s2.5-1.12 2.5-2.5v-2l2.4-2.48C18.2 12.73 19 10.96 19 9c0-3.87-3.13-7-7-7zm0 2c2.76 0 5 2.24 5 5 0 1.34-.55 2.57-1.45 3.48L13 15.05v3.45c0 .55-.45 1-1 1s-1-.45-1-1v-3.45l-2.55-2.57C7.55 11.57 7 10.34 7 9c0-2.76 2.24-5 5-5zm-2 3.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3zm4 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 0 0 0-3z"/>
                                 </svg>
                                 VIPER
                             </h1>
-                            <p class="text-slate-800 dark:text-indigo-400 font-medium mb-3 text-lg">Vision-based Internet Package Extraction & Recognition</p>
-                            <p class="text-slate-500 text-md dark:text-white">
+                            <p class="text-theme-brand-secondary font-medium mb-3 text-lg">Vision-based Internet Package Extraction & Recognition</p>
+                            <p class="text-theme-text-secondary text-md">
                                 Pilih modul dashboard dan unggah file untuk dianalisis.
                             </p>
                         </div>
 
                         <!-- Tabs -->
                         <div class="flex justify-center mb-8">
-                            <div class="bg-slate-200/70 dark:bg-slate-800/70 p-1 rounded-xl inline-flex shadow-inner border border-slate-300/50 dark:border-slate-700/50">
-                                <button @click="inputType = 'scan'" :class="inputType === 'scan' ? 'bg-primary dark:bg-indigo-600 text-slate-900 dark:text-white shadow-md' : 'text-slate-600 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100/50 dark:hover:bg-slate-700/50'" class="px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 active:scale-[0.98] transition-transform">
+                            <div class="bg-theme-secondary p-1 rounded-xl inline-flex shadow-inner border border-theme-border-subtle">
+                                <button @click="inputType = 'scan'" :class="inputType === 'scan' ? 'bg-theme-surface text-theme-brand-primary shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
                                     <div class="flex items-center gap-2">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                                         Scan Gambar (AI)
                                     </div>
                                 </button>
-                                <button @click="inputType = 'data'" :class="inputType === 'data' ? 'bg-secondary text-white shadow-md' : 'text-slate-600 dark:text-white hover:text-slate-900 dark:hover:text-slate-200 hover:bg-slate-100/50 dark:hover:bg-slate-700/50'" class="px-6 py-2.5 rounded-lg text-sm font-medium transition-all duration-300 active:scale-[0.98] transition-transform">
+                                <button @click="inputType = 'data'" :class="inputType === 'data' ? 'bg-theme-surface text-theme-brand-primary shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
                                     <div class="flex items-center gap-2">
                                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                         Input Data Manual
@@ -2588,7 +2607,7 @@ onUnmounted(() => {
                         <!-- Drag & Drop Zone (Input File Image) -->
                         <div v-show="inputType === 'scan'" class="w-full relative mb-12">
                             <label
-                                class="w-full h-[320px] border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-primary dark:hover:border-indigo-500 hover:bg-yellow-50 dark:hover:bg-indigo-500/10 focus-within:border-primary dark:focus-within:border-indigo-500 focus-within:ring-4 focus-within:ring-primary/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-[0_4px_20px_rgba(0,0,0,0.04)] relative overflow-hidden bg-white dark:bg-slate-800"
+                                class="w-full h-[320px] border-2 border-dashed border-theme-border-default hover:border-theme-brand-primary hover:bg-theme-brand-primary/5 focus-within:border-theme-brand-primary focus-within:ring-4 focus-within:ring-theme-brand-primary/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-sm relative overflow-hidden bg-theme-surface"
                                 :class="{ 'cursor-default pointer-events-none': form.images.length > 0 }"
                             >
                                 <input
@@ -2641,14 +2660,14 @@ onUnmounted(() => {
                                     <div class="flex gap-4 mt-3 pointer-events-auto">
                                         <button 
                                             @click.stop="form.images = []" 
-                                            class="px-5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors font-medium active:scale-[0.98] transition-transform"
+                                            class="px-5 py-2.5 rounded-xl border border-theme-border-default text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/10 transition-colors font-medium active:scale-[0.98] transition-transform"
                                         >
                                             Batal
                                         </button>
                                         <button 
                                             @click.stop="submit" 
                                             :disabled="fileSizePercentage >= 100"
-                                            class="px-6 py-2.5 rounded-xl bg-primary hover:bg-[#e6bf00] text-slate-900 dark:bg-indigo-600 dark:hover:bg-indigo-700 dark:text-white shadow-lg shadow-primary/25 dark:shadow-indigo-500/25 transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-transform"
+                                            class="px-6 py-2.5 rounded-xl bg-theme-brand-primary hover:bg-theme-brand-primary/90 text-white shadow-sm transition-all font-semibold disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] transition-transform"
                                         >
                                             Proses File
                                         </button>
@@ -2658,10 +2677,10 @@ onUnmounted(() => {
                                 <!-- Default State (No Files) -->
                                 <template v-else>
                                     <div class="w-20 h-20 bg-primary/20 dark:bg-indigo-500/10 rounded-full flex items-center justify-center mb-5 group-hover:scale-110 group-hover:shadow-[0_0_30px_rgba(255,212,0,0.4)] dark:group-hover:shadow-[0_0_30px_rgba(99,102,241,0.2)] transition-all group-hover:bg-yellow-100 dark:group-hover:bg-indigo-500/20">
-                                        <svg class="anime-svg-draw w-10 h-10 text-primary dark:text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
+                                        <svg class="anime-svg-draw w-10 h-10 text-theme-brand-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path></svg>
                                     </div>
-                                    <span class="text-xl font-bold text-slate-700 dark:text-white mb-2 group-hover:text-primary dark:group-hover:text-indigo-600 transition-colors">Pilih atau Tarik Gambar / ZIP ke Sini</span>
-                                    <span class="text-sm text-slate-500 dark:text-white bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full border border-slate-200 dark:border-slate-700">Mendukung format JPG, PNG, dan ZIP</span>
+                                    <span class="text-xl font-bold text-theme-text-primary mb-2 group-hover:text-theme-brand-primary transition-colors">Pilih atau Tarik Gambar / ZIP ke Sini</span>
+                                    <span class="text-sm text-theme-text-secondary bg-theme-page px-3 py-1 rounded-full border border-theme-border-subtle">Mendukung format JPG, PNG, dan ZIP</span>
                                 </template>
                             </label>
                         </div>
@@ -2669,7 +2688,7 @@ onUnmounted(() => {
                         <!-- Input Data (CSV/Excel) -->
                         <div v-show="inputType === 'data'" class="w-full relative mb-12">
                             <label
-                                class="w-full h-[320px] border-2 border-dashed border-slate-300 dark:border-slate-700 hover:border-secondary hover:bg-red-50 focus-within:border-secondary focus-within:ring-4 focus-within:ring-secondary/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-[0_4px_20px_rgba(0,0,0,0.04)] relative overflow-hidden bg-white dark:bg-slate-800"
+                                class="w-full h-[320px] border-2 border-dashed border-theme-border-default hover:border-theme-brand-secondary hover:bg-theme-brand-secondary/5 focus-within:border-theme-brand-secondary focus-within:ring-4 focus-within:ring-theme-brand-secondary/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-sm relative overflow-hidden bg-theme-surface"
                                 :class="{ 'cursor-default pointer-events-none': uploadDataForm.data_file }"
                             >
                                 <input
@@ -2691,27 +2710,27 @@ onUnmounted(() => {
 
                                 <!-- Staging State (File Selected) -->
                                 <div v-if="uploadDataForm.data_file" class="absolute inset-0 bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-8 z-10">
-                                    <div class="w-16 h-16 bg-secondary/10 rounded-full flex items-center justify-center mb-4">
+                                    <div class="w-16 h-16 bg-theme-brand-primary/10 rounded-full flex items-center justify-center mb-4">
                                         <svg class="anime-svg-draw w-8 h-8 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                                     </div>
                                     <h3 class="text-xl font-bold text-slate-800 dark:text-white mb-2">{{ uploadDataForm.data_file.name }}</h3>
                                     
                                     <!-- Timestamp Override -->
-                                    <div class="w-full max-w-xs mt-2 mb-2 flex flex-col pointer-events-auto">
-                                        <label class="text-xs text-slate-500 dark:text-white mb-1">Atur Waktu (Opsional)</label>
-                                        <input type="date" v-model="uploadDataForm.manual_timestamp" class="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-800 dark:text-white px-3 py-2 focus:ring-secondary dark:focus:ring-green-500 focus:border-secondary dark:focus:border-green-500 text-center shadow-sm">
+                                    <div class="w-full max-w-xs mt-1 mb-2 flex flex-col pointer-events-auto">
+                                        <label class="text-[11px] text-theme-text-secondary mb-1">Atur Waktu (Opsional)</label>
+                                        <input type="date" v-model="uploadDataForm.manual_timestamp" class="w-full bg-theme-surface border border-theme-border-default rounded-lg text-sm text-theme-text-primary px-3 py-2 focus:ring-theme-brand-secondary focus:border-theme-brand-secondary text-center shadow-sm">
                                     </div>
 
                                     <div class="flex gap-4 mt-3 pointer-events-auto">
                                         <button 
                                             @click.stop="uploadDataForm.data_file = null" 
-                                            class="px-5 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-white hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-900 dark:hover:text-slate-100 transition-colors font-medium active:scale-[0.98] transition-transform"
+                                            class="px-5 py-2.5 rounded-xl border border-theme-border-default text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/10 transition-colors font-medium active:scale-[0.98] transition-transform"
                                         >
                                             Batal
                                         </button>
                                         <button 
                                             @click.stop="uploadData" 
-                                            class="px-6 py-2.5 rounded-xl bg-secondary hover:bg-[#d90017] text-white dark:bg-green-600 dark:hover:bg-green-700 shadow-lg shadow-secondary/25 transition-all font-semibold active:scale-[0.98] transition-transform"
+                                            class="px-6 py-2.5 rounded-xl bg-theme-brand-secondary hover:bg-theme-brand-secondary/90 text-white shadow-sm transition-all font-semibold active:scale-[0.98] transition-transform"
                                         >
                                             Upload Data
                                         </button>
@@ -2748,7 +2767,7 @@ onUnmounted(() => {
                                     />
                                 </div>
                                 <label
-                                    class="cursor-pointer px-4 py-2 bg-secondary text-white hover:bg-[#d90017] border border-secondary rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-sm shadow-secondary/20"
+                                    class="cursor-pointer px-4 py-2 bg-theme-surface border border-theme-border-default text-theme-text-primary hover:bg-theme-secondary rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
                                     :class="{
                                         'opacity-50 cursor-not-allowed':
                                             form.processing,
@@ -2787,7 +2806,7 @@ onUnmounted(() => {
                                 </label>
                                 
                                 <label
-                                    class="cursor-pointer px-4 py-2 bg-secondary text-white hover:bg-[#d90017] border border-secondary rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-sm shadow-secondary/20"
+                                    class="cursor-pointer px-4 py-2 bg-theme-surface border border-theme-border-default text-theme-text-primary hover:bg-theme-secondary rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
                                     :class="{
                                         'opacity-50 cursor-not-allowed':
                                             form.processing,
@@ -2830,7 +2849,7 @@ onUnmounted(() => {
                                             activeSession.packages &&
                                             activeSession.packages.length > 0
                                         "
-                                        class="px-4 py-2 bg-secondary text-white hover:bg-[#d90017] border border-secondary rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-sm shadow-secondary/20"
+                                        class="px-4 py-2 bg-theme-surface text-theme-text-primary hover:bg-theme-secondary border border-theme-border-default rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
                                     >
                                         <svg
                                             class="w-4 h-4"
@@ -2848,14 +2867,14 @@ onUnmounted(() => {
                                         Download
                                     </button>
                                     <div class="absolute right-0 pt-2 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
-                                        <div class="w-40 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden flex flex-col">
-                                            <a :href="route('scanner.export', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-slate-800 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-2">
+                                        <div class="w-40 bg-theme-surface border border-theme-border-default rounded-lg shadow-xl overflow-hidden flex flex-col">
+                                            <a :href="route('scanner.export', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-theme-text-primary hover:bg-theme-secondary transition-colors flex items-center gap-2">
                                                 <span>📊</span> Excel
                                             </a>
-                                            <a :href="route('scanner.exportCsv', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-slate-800 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-2 border-t border-slate-100">
+                                            <a :href="route('scanner.exportCsv', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-theme-text-primary hover:bg-theme-secondary transition-colors flex items-center gap-2 border-t border-theme-border-subtle">
                                                 <span>📝</span> CSV
                                             </a>
-                                            <a :href="route('scanner.exportTxt', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-slate-800 hover:bg-slate-100 hover:text-slate-900 transition-colors flex items-center gap-2 border-t border-slate-100">
+                                            <a :href="route('scanner.exportTxt', activeSession.id)" target="_blank" class="px-4 py-2 text-sm text-theme-text-primary hover:bg-theme-secondary transition-colors flex items-center gap-2 border-t border-theme-border-subtle">
                                                 <span>📄</span> Text
                                             </a>
                                         </div>
@@ -2864,7 +2883,7 @@ onUnmounted(() => {
 
                                 <button
                                     @click="isChatOpen = true"
-                                    class="px-4 py-2 bg-secondary text-white hover:bg-[#d90017] rounded-lg text-sm font-semibold transition flex items-center gap-2 shadow-md shadow-secondary/20 active:scale-[0.98] transition-transform"
+                                    class="px-4 py-2 bg-transparent text-theme-text-muted hover:bg-theme-secondary hover:text-theme-text-primary rounded-lg text-sm font-medium transition flex items-center gap-2 active:scale-[0.98] transition-transform"
                                 >
                                     <svg
                                         class="w-4 h-4"
@@ -2898,10 +2917,10 @@ onUnmounted(() => {
                             <div class="flex items-center justify-between">
                                 <div class="flex items-center gap-4">
                                     <div
-                                        class="w-6 h-6 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"
+                                        class="w-6 h-6 border-2 border-theme-brand-secondary border-t-transparent rounded-full animate-spin"
                                     ></div>
                                     <span
-                                        class="text-base font-semibold text-blue-700 animate-pulse"
+                                        class="text-base font-semibold text-theme-brand-secondary animate-pulse"
                                         >Memproses:
                                         {{
                                             activeSession.status === "pending"
@@ -2912,7 +2931,7 @@ onUnmounted(() => {
                                 </div>
                                 <button
                                     @click="cancelScan(activeSession.id)"
-                                    class="px-3 py-1.5 bg-red-50 text-red-700 hover:bg-red-100 border border-red-200 rounded-lg transition text-sm font-medium flex items-center gap-1.5 active:scale-[0.98] transition-transform"
+                                    class="px-3 py-1.5 bg-theme-semantic-danger/10 text-theme-semantic-danger hover:bg-theme-semantic-danger/20 border border-theme-semantic-danger/20 rounded-lg transition text-sm font-medium flex items-center gap-1.5 active:scale-[0.98] transition-transform"
                                     :disabled="cancelLoading[activeSession.id]"
                                 >
                                     <svg
@@ -2955,13 +2974,13 @@ onUnmounted(() => {
 
                             <!-- Progress Bar -->
                             <div class="flex items-center gap-3 mt-1">
-                                <div class="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden border border-slate-300/50">
-                                    <div class="anime-progress-bar bg-secondary dark:bg-secondary h-2.5 rounded-full relative overflow-hidden shadow-sm"
+                                <div class="w-full bg-theme-border-subtle rounded-full h-2.5 overflow-hidden border border-theme-border-default">
+                                    <div class="anime-progress-bar bg-theme-brand-secondary h-2.5 rounded-full relative overflow-hidden shadow-sm"
                                          style="width: 0%">
                                          <div class="absolute inset-0 bg-white/20 w-full h-full animate-[pulse_2s_infinite]"></div>
                                     </div>
                                 </div>
-                                <span class="text-sm font-bold text-secondary dark:text-secondary w-10 text-right">{{ extractionProgress }}%</span>
+                                <span class="text-sm font-bold text-theme-brand-secondary w-10 text-right">{{ extractionProgress }}%</span>
                             </div>
                         </div>
 
@@ -3044,7 +3063,7 @@ onUnmounted(() => {
                                 activeSession.packages &&
                                 activeSession.packages.length > 0
                             "
-                            class="bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-md mb-6 relative"
+                            class="bg-white border border-theme-border-default rounded-2xl overflow-hidden shadow-md mb-6 relative"
                         >
                             <!-- Background accent -->
                             <div
@@ -3208,41 +3227,45 @@ onUnmounted(() => {
                                         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                                             <!-- Average Yield Tab -->
                                             <button @click="activeSummaryTab = 'yield'" 
-                                                class="flex flex-col items-start p-3 rounded-lg border transition-all h-full text-left w-full active:scale-[0.98] transition-transform"
-                                                :class="activeSummaryTab === 'yield' ? 'bg-secondary border-secondary shadow-lg shadow-secondary/30 text-white' : 'bg-white/50 border-secondary/40 hover:bg-white text-slate-800'">
-                                                <div class="text-xs mb-1" :class="activeSummaryTab === 'yield' ? 'text-slate-500' : 'text-slate-500'">Average Yield</div>
-                                                <div class="font-bold flex items-center gap-2" :class="activeSummaryTab === 'yield' ? 'text-slate-800' : 'text-slate-800'" v-if="marketAverages.yield">
-                                                     {{ marketAverages.yield.provider }} : {{ marketAverages.yield.value }}
+                                                class="flex flex-col items-start p-4 rounded-xl border transition-all h-full text-left w-full active:scale-[0.98] transition-transform"
+                                                :class="activeSummaryTab === 'yield' ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-enterprise-border hover:bg-slate-50'">
+                                                <div class="text-xs font-semibold tracking-wide uppercase mb-2" :class="activeSummaryTab === 'yield' ? 'text-blue-600' : 'text-enterprise-muted'">Average Yield</div>
+                                                <div class="font-bold flex items-baseline gap-2 text-enterprise-text text-xl" v-if="marketAverages.yield">
+                                                     {{ marketAverages.yield.value }}
+                                                     <span class="text-xs font-medium text-enterprise-muted lowercase">/GB ({{ marketAverages.yield.provider }})</span>
                                                 </div>
                                             </button>
                                             
                                             <!-- Average Price Tab -->
                                             <button @click="activeSummaryTab = 'price'" 
-                                                class="flex flex-col items-start p-3 rounded-lg border transition-all h-full text-left w-full active:scale-[0.98] transition-transform"
-                                                :class="activeSummaryTab === 'price' ? 'bg-secondary border-secondary shadow-lg shadow-secondary/30 text-white' : 'bg-white/50 border-secondary/40 hover:bg-white text-slate-800'">
-                                                <div class="text-xs mb-1" :class="activeSummaryTab === 'price' ? 'text-slate-500' : 'text-slate-500'">Average Price</div>
-                                                <div class="font-bold flex items-center gap-2" :class="activeSummaryTab === 'price' ? 'text-slate-800' : 'text-slate-800'" v-if="marketAverages.price">
-                                                     {{ marketAverages.price.provider }} : {{ marketAverages.price.value }}
+                                                class="flex flex-col items-start p-4 rounded-xl border transition-all h-full text-left w-full active:scale-[0.98] transition-transform"
+                                                :class="activeSummaryTab === 'price' ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-enterprise-border hover:bg-slate-50'">
+                                                <div class="text-xs font-semibold tracking-wide uppercase mb-2" :class="activeSummaryTab === 'price' ? 'text-blue-600' : 'text-enterprise-muted'">Average Price</div>
+                                                <div class="font-bold flex items-baseline gap-2 text-enterprise-text text-xl" v-if="marketAverages.price">
+                                                     {{ marketAverages.price.value }}
+                                                     <span class="text-xs font-medium text-enterprise-muted">({{ marketAverages.price.provider }})</span>
                                                 </div>
                                             </button>
 
                                             <!-- Average Data Quota Tab -->
                                             <button @click="activeSummaryTab = 'quota'" 
-                                                class="flex flex-col items-start p-3 rounded-lg border transition-all h-full text-left w-full active:scale-[0.98] transition-transform"
-                                                :class="activeSummaryTab === 'quota' ? 'bg-secondary border-secondary shadow-lg shadow-secondary/30 text-white' : 'bg-white/50 border-secondary/40 hover:bg-white text-slate-800'">
-                                                <div class="text-xs mb-1" :class="activeSummaryTab === 'quota' ? 'text-slate-500' : 'text-slate-500'">Average Data Quota</div>
-                                                <div class="font-bold flex items-center gap-2" :class="activeSummaryTab === 'quota' ? 'text-slate-800' : 'text-slate-800'" v-if="marketAverages.quota">
-                                                     {{ marketAverages.quota.provider }} : {{ marketAverages.quota.value }}
+                                                class="flex flex-col items-start p-4 rounded-xl border transition-all h-full text-left w-full active:scale-[0.98] transition-transform"
+                                                :class="activeSummaryTab === 'quota' ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-enterprise-border hover:bg-slate-50'">
+                                                <div class="text-xs font-semibold tracking-wide uppercase mb-2" :class="activeSummaryTab === 'quota' ? 'text-blue-600' : 'text-enterprise-muted'">Average Quota</div>
+                                                <div class="font-bold flex items-baseline gap-2 text-enterprise-text text-xl" v-if="marketAverages.quota">
+                                                     {{ marketAverages.quota.value }}
+                                                     <span class="text-xs font-medium text-enterprise-muted">({{ marketAverages.quota.provider }})</span>
                                                 </div>
                                             </button>
 
                                             <!-- Average Validity Tab -->
                                             <button @click="activeSummaryTab = 'validity'" 
-                                                class="flex flex-col items-start p-3 rounded-lg border transition-all h-full text-left w-full active:scale-[0.98] transition-transform"
-                                                :class="activeSummaryTab === 'validity' ? 'bg-secondary border-secondary shadow-lg shadow-secondary/30 text-white' : 'bg-white/50 border-secondary/40 hover:bg-white text-slate-800'">
-                                                <div class="text-xs mb-1" :class="activeSummaryTab === 'validity' ? 'text-slate-500' : 'text-slate-500'">Average Validity</div>
-                                                <div class="font-bold flex items-center gap-2" :class="activeSummaryTab === 'validity' ? 'text-slate-800' : 'text-slate-800'" v-if="marketAverages.validity">
-                                                     {{ marketAverages.validity.provider }} : {{ marketAverages.validity.value }}
+                                                class="flex flex-col items-start p-4 rounded-xl border transition-all h-full text-left w-full active:scale-[0.98] transition-transform"
+                                                :class="activeSummaryTab === 'validity' ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500' : 'bg-white border-enterprise-border hover:bg-slate-50'">
+                                                <div class="text-xs font-semibold tracking-wide uppercase mb-2" :class="activeSummaryTab === 'validity' ? 'text-blue-600' : 'text-enterprise-muted'">Average Validity</div>
+                                                <div class="font-bold flex items-baseline gap-2 text-enterprise-text text-xl" v-if="marketAverages.validity">
+                                                     {{ marketAverages.validity.value }}
+                                                     <span class="text-xs font-medium text-enterprise-muted">({{ marketAverages.validity.provider }})</span>
                                                 </div>
                                             </button>
                                         </div>
@@ -3530,23 +3553,23 @@ onUnmounted(() => {
                     </div>
 
                     <!-- AI Strategic Insight Section -->
-                    <div class="anim-on-scroll opacity-0 mt-8 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-md mb-8 p-6" v-if="activeSession.packages && activeSession.packages.length > 0">
+                    <div class="mt-8 bg-white border border-enterprise-border rounded-xl shadow-sm mb-8 p-6" v-if="activeSession.packages && activeSession.packages.length > 0">
                         <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
-                            <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <h4 class="text-sm font-semibold text-enterprise-text uppercase tracking-wide flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                                 </svg>
                                 AI Strategic Insight
                             </h4>
-                            <button @click="generateAiInsight" :disabled="aiInsightLoading" class="mt-4 sm:mt-0 bg-indigo-600 hover:bg-indigo-700 text-slate-800 font-semibold text-xs py-2 px-4 rounded-md transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm active:scale-[0.98] transition-transform">
-                                <svg v-if="aiInsightLoading" class="animate-spin h-4 w-4 text-slate-800" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <button @click="generateAiInsight" :disabled="aiInsightLoading" class="mt-4 sm:mt-0 bg-theme-brand-secondary hover:bg-theme-brand-secondary/90 text-white font-medium text-sm py-2 px-4 rounded-lg transition-colors disabled:opacity-50 flex items-center gap-2 shadow-sm active:scale-[0.98] transition-transform">
+                                <svg v-if="aiInsightLoading" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                 </svg>
                                 <span>{{ aiInsightLoading ? 'Analyzing Market...' : 'Generate AI Strategy' }}</span>
                             </button>
                         </div>
-                        <div class="bg-slate-50 rounded-lg p-5 border border-slate-200/80 min-h-[150px] shadow-inner">
+                        <div class="bg-slate-50 rounded-lg p-6 border border-enterprise-border min-h-[150px]">
                             <div v-if="aiInsightLoading" class="animate-pulse space-y-4 py-2">
                                 <div class="h-4 bg-slate-200 dark:bg-slate-700 rounded w-1/3 mb-4"></div>
                                 <div class="space-y-3">
@@ -3561,8 +3584,8 @@ onUnmounted(() => {
                                     <div class="h-6 w-24 bg-indigo-100 dark:bg-indigo-900 rounded-full"></div>
                                 </div>
                             </div>
-                            <div v-else-if="aiInsightData" class="prose prose-sm max-w-none prose-indigo text-slate-800" v-html="parseMarkdown(aiInsightData)"></div>
-                            <div v-else class="flex items-center justify-center h-full text-slate-400 py-10 text-sm italic">
+                            <div v-else-if="aiInsightData" class="prose prose-sm max-w-none prose-slate text-enterprise-text" v-html="parseMarkdown(aiInsightData)"></div>
+                            <div v-else class="flex items-center justify-center h-full text-enterprise-muted py-10 text-sm">
                                 Klik tombol di atas untuk mendapatkan insight pasar dan strategi dari AI.
                             </div>
                         </div>
@@ -3570,38 +3593,54 @@ onUnmounted(() => {
 
                     <!-- Market Trend Section -->
                         <div class="anim-on-scroll opacity-0 bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-md mb-8 p-6">
-                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6">
-                                <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Market Trend</h4>
-                                
-                                <div class="flex flex-col sm:flex-row gap-3 mt-4 sm:mt-0">
+                            
+                            <!-- Header & Title -->
+                            <div class="mb-6 border-b border-slate-200 pb-4">
+                                <h3 class="text-lg font-bold text-slate-800 flex items-center gap-2">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-theme-brand-secondary" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M2 11a1 1 0 011-1h2a1 1 0 011 1v5a1 1 0 01-1 1H3a1 1 0 01-1-1v-5zM8 7a1 1 0 011-1h2a1 1 0 011 1v9a1 1 0 01-1 1H9a1 1 0 01-1-1V7zM14 4a1 1 0 011-1h2a1 1 0 011 1v12a1 1 0 01-1 1h-2a1 1 0 01-1-1V4z" />
+                                    </svg>
+                                    Market Trend & Pricing Evolution
+                                </h3>
+                                <p class="text-xs text-slate-500 mt-1 font-medium">
+                                    Pantau pergerakan rata-rata harga, yield (Rp/GB), dan jumlah paket yang ditawarkan dari waktu ke waktu.
+                                </p>
+                            </div>
+
+                            <!-- Interactive Filter Container -->
+                            <div class="flex flex-wrap items-center justify-between gap-4 mb-8 px-4 py-3 bg-slate-50 border border-slate-200/80 rounded-xl shadow-xs">
+                                <div class="flex flex-wrap items-center gap-2.5">
+                                    <span class="text-xs font-bold text-slate-800 mr-2">Filter Data:</span>
                                     <select 
                                         v-model="trendMetric" 
-                                        class="bg-white border border-slate-300 rounded-lg text-sm text-slate-800 py-1.5 px-3 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-sm"
+                                        class="bg-white text-slate-800 border border-slate-300 rounded-lg text-xs font-bold py-1.5 px-3 focus:ring-blue-500 focus:border-blue-500 shadow-sm transition active:scale-[0.98]"
                                     >
-                                        <option value="avg_price">Kenaikan/Penurunan Harga</option>
-                                        <option value="avg_yield">Kenaikan/Penurunan Yield</option>
-                                        <option value="count">Jumlah Penambahan Paket</option>
+                                        <option value="avg_price">Rata-rata Harga</option>
+                                        <option value="avg_yield">Rata-rata Yield</option>
+                                        <option value="count">Jumlah Paket</option>
                                     </select>
                                     
-                                    <div class="relative min-w-[200px]">
-                                        <button @click="isTrendFileFilterOpen = !isTrendFileFilterOpen" class="w-full text-left bg-white text-sm text-slate-800 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 shadow-sm flex justify-between items-center">
-                                            <span class="truncate">{{ trendFiles.length === 0 ? 'Semua File' : trendFiles.length + ' File Dipilih' }}</span>
-                                            <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
+                                    <div class="relative min-w-[160px]">
+                                        <button @click="isTrendFileFilterOpen = !isTrendFileFilterOpen" class="w-full text-left bg-white text-xs font-bold text-slate-800 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm flex justify-between items-center transition active:scale-[0.98]">
+                                            <span class="truncate">{{ trendFiles.length === 0 ? 'Semua File' : trendFiles.length + ' File' }}</span>
+                                            <svg class="w-4 h-4 text-slate-500 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
                                         </button>
                                         <div v-if="isTrendFileFilterOpen" class="absolute z-10 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto">
                                             <div class="p-2 space-y-1">
-                                                <label class="flex items-center gap-2 cursor-pointer p-1 hover:bg-slate-50 rounded">
-                                                    <input type="checkbox" :checked="trendFiles.length === 0" @change="trendFiles = []" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
-                                                    <span class="text-sm font-medium text-slate-700">Semua File</span>
+                                                <label class="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                                                    <input type="checkbox" :checked="trendFiles.length === 0" @change="trendFiles = []" class="rounded border-slate-300 text-theme-brand-secondary focus:ring-theme-brand-secondary">
+                                                    <span class="text-xs font-medium text-slate-700">Semua File</span>
                                                 </label>
-                                                <label v-for="file in availableTrendFiles" :key="file" class="flex items-center gap-2 cursor-pointer p-1 hover:bg-slate-50 rounded">
-                                                    <input type="checkbox" :value="file" v-model="trendFiles" class="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
-                                                    <span class="text-sm text-slate-700 truncate" :title="file">{{ file }}</span>
+                                                <div class="border-t border-slate-100 my-1"></div>
+                                                <label v-for="file in availableTrendFiles" :key="file" class="flex items-center gap-2 cursor-pointer p-1.5 hover:bg-slate-50 rounded">
+                                                    <input type="checkbox" :value="file" v-model="trendFiles" class="rounded border-slate-300 text-theme-brand-secondary focus:ring-theme-brand-secondary">
+                                                    <span class="text-xs font-medium text-slate-700 truncate" :title="file">{{ file }}</span>
                                                 </label>
                                             </div>
                                         </div>
                                     </div>
-                                    
+                                </div>
+                                <div class="flex items-center gap-2 min-w-[280px]">
                                     <VueDatePicker
                                         v-model="trendDateRange"
                                         range
@@ -3615,21 +3654,39 @@ onUnmounted(() => {
                             
                             <!-- KPI Hero Cards -->
                             <div v-if="trendRawData && trendRawData.kpi" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm">
-                                    <div class="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">Total Paket</div>
-                                    <div class="text-2xl font-bold text-slate-800">{{ trendRawData.kpi.total_packages || 0 }}</div>
+                                <div class="bg-theme-surface border border-theme-border-subtle p-4 rounded-xl shadow-sm">
+                                    <div class="text-[11px] text-theme-text-secondary font-semibold uppercase tracking-wider mb-1">Total Paket</div>
+                                    <div class="text-2xl font-bold text-theme-text-primary">{{ trendRawData.kpi.total_packages || 0 }}</div>
                                 </div>
-                                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm">
-                                    <div class="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">Total Scan</div>
-                                    <div class="text-2xl font-bold text-slate-800">{{ trendRawData.kpi.total_scans || 0 }}</div>
+                                <div class="bg-theme-surface border border-theme-border-subtle p-4 rounded-xl shadow-sm">
+                                    <div class="text-[11px] text-theme-text-secondary font-semibold uppercase tracking-wider mb-1">Total Scan</div>
+                                    <div class="text-2xl font-bold text-theme-text-primary">{{ trendRawData.kpi.total_scans || 0 }}</div>
                                 </div>
-                                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm">
-                                    <div class="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">Avg Price</div>
-                                    <div class="text-2xl font-bold text-indigo-600">Rp{{ Math.round((trendRawData.kpi.avg_price || 0) / 1000) }}k</div>
+                                <div class="bg-theme-surface border border-theme-border-subtle p-4 rounded-xl shadow-sm">
+                                    <div class="text-[11px] text-theme-text-secondary font-semibold uppercase tracking-wider mb-1">Avg Price</div>
+                                    <div class="text-2xl font-bold text-theme-text-primary">Rp{{ trendRawData.kpi.avg_price ? (trendRawData.kpi.avg_price / 1000).toFixed(0) + 'k' : 0 }}</div>
                                 </div>
-                                <div class="bg-slate-50 border border-slate-200 p-4 rounded-xl shadow-sm">
-                                    <div class="text-xs text-slate-500 font-semibold uppercase tracking-wider mb-1">Avg Yield</div>
-                                    <div class="text-2xl font-bold text-green-600">Rp{{ trendRawData.kpi.avg_yield || 0 }}/GB</div>
+                                <div class="bg-theme-surface border border-theme-border-subtle p-4 rounded-xl shadow-sm">
+                                    <div class="text-[11px] text-theme-text-secondary font-semibold uppercase tracking-wider mb-1">Avg Yield</div>
+                                    <div class="text-2xl font-bold text-theme-text-primary">Rp{{ trendRawData.kpi.avg_yield || 0 }}/GB</div>
+                                </div>
+                            </div>
+
+                            <!-- Custom Interactive Legend for Market Trend -->
+                            <div v-if="trendProviders.length > 0" class="flex flex-wrap items-center justify-center gap-4 mb-6 px-4 py-3 bg-theme-surface border border-theme-border-subtle rounded-xl shadow-sm">
+                                <div class="flex flex-wrap justify-center items-center gap-2.5">
+                                    <button
+                                        v-for="prov in trendProviders"
+                                        :key="prov"
+                                        @click="toggleTrendProvider(prov)"
+                                        class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 border active:scale-[0.98] transition-transform"
+                                        :class="!trendHiddenProviders.includes(prov)
+                                            ? 'bg-theme-bg-primary text-theme-text-primary border-slate-300 shadow-sm ring-1 ring-slate-200/50'
+                                            : 'bg-slate-200/60 text-slate-400 border-transparent opacity-60 hover:opacity-80'"
+                                    >
+                                        <span class="w-2.5 h-2.5 rounded-full shadow-sm" :style="{ backgroundColor: !trendHiddenProviders.includes(prov) ? getProviderColor(prov) : '#94a3b8' }"></span>
+                                        <span>{{ prov }}</span>
+                                    </button>
                                 </div>
                             </div>
 
@@ -3849,9 +3906,9 @@ onUnmounted(() => {
                                                 <div>
                                                     <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Range Harga (Rp)</h5>
                                                     <div class="flex items-center gap-2">
-                                                        <input type="number" v-model="filters.priceMin" placeholder="Min" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
-                                                        <span class="text-slate-400">-</span>
-                                                        <input type="number" v-model="filters.priceMax" placeholder="Max" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
+                                                        <input type="number" v-model="filters.priceMin" placeholder="Min" class="w-full bg-theme-surface border border-theme-border-default rounded px-2 py-1.5 text-xs text-theme-text-primary focus:border-theme-brand-secondary outline-none placeholder-theme-text-muted shadow-sm" />
+                                                        <span class="text-theme-text-muted">-</span>
+                                                        <input type="number" v-model="filters.priceMax" placeholder="Max" class="w-full bg-theme-surface border border-theme-border-default rounded px-2 py-1.5 text-xs text-theme-text-primary focus:border-theme-brand-secondary outline-none placeholder-theme-text-muted shadow-sm" />
                                                     </div>
                                                 </div>
 
@@ -3859,9 +3916,9 @@ onUnmounted(() => {
                                                 <div>
                                                     <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Masa Aktif (Hari)</h5>
                                                     <div class="flex items-center gap-2">
-                                                        <input type="number" v-model="filters.daysMin" placeholder="Min" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
-                                                        <span class="text-slate-400">-</span>
-                                                        <input type="number" v-model="filters.daysMax" placeholder="Max" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
+                                                        <input type="number" v-model="filters.daysMin" placeholder="Min" class="w-full bg-theme-surface border border-theme-border-default rounded px-2 py-1.5 text-xs text-theme-text-primary focus:border-theme-brand-secondary outline-none placeholder-theme-text-muted shadow-sm" />
+                                                        <span class="text-theme-text-muted">-</span>
+                                                        <input type="number" v-model="filters.daysMax" placeholder="Max" class="w-full bg-theme-surface border border-theme-border-default rounded px-2 py-1.5 text-xs text-theme-text-primary focus:border-theme-brand-secondary outline-none placeholder-theme-text-muted shadow-sm" />
                                                     </div>
                                                 </div>
 
@@ -3869,9 +3926,9 @@ onUnmounted(() => {
                                                 <div>
                                                     <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Range Yield (Rp/GB)</h5>
                                                     <div class="flex items-center gap-2">
-                                                        <input type="number" v-model="filters.yieldMin" placeholder="Min" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
-                                                        <span class="text-slate-400">-</span>
-                                                        <input type="number" v-model="filters.yieldMax" placeholder="Max" class="w-full bg-white border border-slate-300 rounded px-2 py-1.5 text-xs text-slate-800 focus:border-blue-500 outline-none placeholder-slate-400 shadow-sm" />
+                                                        <input type="number" v-model="filters.yieldMin" placeholder="Min" class="w-full bg-theme-surface border border-theme-border-default rounded px-2 py-1.5 text-xs text-theme-text-primary focus:border-theme-brand-secondary outline-none placeholder-theme-text-muted shadow-sm" />
+                                                        <span class="text-theme-text-muted">-</span>
+                                                        <input type="number" v-model="filters.yieldMax" placeholder="Max" class="w-full bg-theme-surface border border-theme-border-default rounded px-2 py-1.5 text-xs text-theme-text-primary focus:border-theme-brand-secondary outline-none placeholder-theme-text-muted shadow-sm" />
                                                     </div>
                                                 </div>
                                             </div>
@@ -3880,10 +3937,10 @@ onUnmounted(() => {
                                 <!-- LEFT: Source Images (Only show when editing for easier crosscheck) -->
                                 <div
                                     v-if="isEditingTable[activeSession.id]"
-                                    class="w-full xl:w-1/3 p-4 bg-slate-50 border-b xl:border-b-0 xl:border-r border-slate-200 max-h-[600px] overflow-y-auto custom-scrollbar"
+                                    class="w-full xl:w-1/3 p-4 bg-theme-secondary border-b xl:border-b-0 xl:border-r border-theme-border-subtle max-h-[600px] overflow-y-auto custom-scrollbar"
                                 >
                                     <h4
-                                        class="text-xs text-slate-700 font-bold mb-4 uppercase tracking-wider sticky top-0 bg-slate-50 py-2 z-10"
+                                        class="text-[11px] text-theme-text-primary font-bold mb-4 uppercase tracking-wider sticky top-0 bg-theme-secondary py-2 z-10"
                                     >
                                         Gambar Sumber Asli
                                     </h4>
@@ -3911,16 +3968,16 @@ onUnmounted(() => {
                                                             )
                                                         "
                                                         :src="'/storage/' + att"
-                                                        class="rounded-lg border border-slate-200 hover:border-blue-500 transition cursor-zoom-in w-full object-contain bg-white shadow-sm"
+                                                        class="rounded-lg border border-theme-border-default hover:border-theme-brand-secondary transition cursor-zoom-in w-full object-contain bg-theme-surface shadow-sm"
                                                         @click="openImage(att)"
                                                         title="Klik untuk memperbesar"
                                                     />
                                                     <div
                                                         v-else
-                                                        class="text-xs text-slate-700 font-medium p-2 bg-white rounded border border-slate-200 shadow-sm break-all flex items-center gap-2"
+                                                        class="text-[11px] text-theme-text-primary font-medium p-2 bg-theme-surface rounded border border-theme-border-default shadow-sm break-all flex items-center gap-2"
                                                     >
                                                         <svg
-                                                            class="w-4 h-4 shrink-0 text-blue-600"
+                                                            class="w-4 h-4 shrink-0 text-theme-brand-secondary"
                                                             fill="none"
                                                             stroke="currentColor"
                                                             viewBox="0 0 24 24"
@@ -3954,7 +4011,7 @@ onUnmounted(() => {
                                         class="w-full text-sm text-left text-slate-700"
                                     >
                                         <thead
-                                            class="text-xs text-slate-600 uppercase bg-slate-50 border-b border-slate-200 font-bold"
+                                            class="text-[11px] text-theme-text-secondary uppercase bg-theme-secondary border-b border-theme-border-subtle font-bold"
                                         >
                                             <tr>
                                                 <th class="px-4 py-3">
@@ -4025,7 +4082,7 @@ onUnmounted(() => {
                                             <tr
                                                 v-for="pkg in filteredPackagesList"
                                                 :key="pkg.id"
-                                                class="border-b border-slate-100 transition-colors cursor-pointer hover:bg-slate-50/80"
+                                                class="border-b border-theme-border-subtle transition-colors cursor-pointer hover:bg-theme-secondary/80"
                                                 @click="openEditModal(pkg, activeSession.id)"
                                             >
                                                 <td class="px-4 py-3 text-slate-600 text-xs truncate max-w-[150px]" :title="pkg.image_timestamp || pkg.created_at">
@@ -4115,7 +4172,7 @@ onUnmounted(() => {
                                                     activeSession.id
                                                 ]"
                                                 :key="idx"
-                                                class="border-b border-slate-200 bg-slate-50 hover:bg-slate-100/60"
+                                                class="border-b border-theme-border-default bg-theme-surface hover:bg-theme-secondary/80"
                                             >
                                                 <td class="px-2 py-2">
                                                     <div class="text-xs text-slate-500 truncate max-w-[100px]" :title="pkg.image_timestamp">{{ pkg.image_timestamp || '-' }}</div>
@@ -4315,33 +4372,33 @@ onUnmounted(() => {
                             </div>
                         </div>
                         <!-- Rejected Packages Table -->
-                        <div v-if="rejectedPackages.length > 0" class="mt-8 border-t-2 border-red-500 pt-6">
+                        <div v-if="rejectedPackages.length > 0" class="mt-8 border-t-2 border-theme-semantic-danger pt-6">
                             <div class="flex items-center gap-2 mb-4">
-                                <h3 class="text-lg font-bold text-red-500">Paket Ditolak (Anomali Harga/Kuota/Hari)</h3>
+                                <h3 class="text-lg font-bold text-theme-semantic-danger">Paket Ditolak (Anomali Harga/Kuota/Hari)</h3>
                             </div>
-                            <div class="bg-white border border-red-200 rounded-xl overflow-hidden shadow-sm">
+                            <div class="bg-theme-semantic-danger/5 border border-theme-semantic-danger/20 rounded-xl overflow-hidden shadow-sm">
                                 <table class="w-full text-left border-collapse text-sm">
                                     <thead>
-                                        <tr class="bg-red-50 text-slate-700 border-b border-red-200">
-                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-xs">Provider</th>
-                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-xs">Nama Paket</th>
-                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-xs">Harga Mentah</th>
-                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-xs">Kuota Mentah</th>
-                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-xs">Hari Mentah</th>
-                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-xs text-right">Aksi</th>
+                                        <tr class="bg-theme-semantic-danger/10 text-theme-text-primary border-b border-theme-semantic-danger/20">
+                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-[11px]">Provider</th>
+                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-[11px]">Nama Paket</th>
+                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-[11px]">Harga Mentah</th>
+                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-[11px]">Kuota Mentah</th>
+                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-[11px]">Hari Mentah</th>
+                                            <th class="px-4 py-3 font-semibold uppercase tracking-wider text-[11px] text-right">Aksi</th>
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        <tr v-for="(res, i) in rejectedPackages" :key="res.id" class="border-b border-red-100 hover:bg-red-50/50">
+                                        <tr v-for="(res, i) in rejectedPackages" :key="res.id" class="border-b border-theme-semantic-danger/10 hover:bg-theme-semantic-danger/10">
                                             <td class="px-4 py-3">
-                                                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-slate-100 text-slate-800">{{ res.provider }}</span>
+                                                <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-theme-secondary text-theme-text-primary">{{ res.provider }}</span>
                                             </td>
-                                            <td class="px-4 py-3 font-medium text-slate-900">{{ res.package_name || '-' }}</td>
-                                            <td class="px-4 py-3 font-mono text-red-500">{{ res.price }}</td>
-                                            <td class="px-4 py-3 font-mono text-red-500">{{ res.gb }}</td>
-                                            <td class="px-4 py-3 font-mono text-red-500">{{ res.days }}</td>
+                                            <td class="px-4 py-3 font-medium text-theme-text-primary">{{ res.package_name || '-' }}</td>
+                                            <td class="px-4 py-3 font-mono text-theme-semantic-danger">{{ res.price }}</td>
+                                            <td class="px-4 py-3 font-mono text-theme-semantic-danger">{{ res.gb }}</td>
+                                            <td class="px-4 py-3 font-mono text-theme-semantic-danger">{{ res.days }}</td>
                                             <td class="px-4 py-3 text-right">
-                                                <button @click="openEditModal(res, activeSession.id)" class="text-xs bg-red-100 text-red-600 hover:bg-red-200 px-3 py-1.5 rounded-lg font-bold transition active:scale-[0.98]">Perbaiki</button>
+                                                <button @click="openEditModal(res, activeSession.id)" class="text-xs bg-theme-semantic-danger/20 text-theme-semantic-danger hover:bg-theme-semantic-danger/30 px-3 py-1.5 rounded-lg font-bold transition active:scale-[0.98]">Perbaiki</button>
                                             </td>
                                         </tr>
                                     </tbody>
@@ -4350,22 +4407,22 @@ onUnmounted(() => {
                         </div>
 
                         <!-- Knowledge Base AI (Learned Patterns) -->
-                        <div v-if="learnedPatterns.length > 0" class="mt-8 border-t-2 border-indigo-500 pt-6">
+                        <div v-if="learnedPatterns.length > 0" class="mt-8 border-t-2 border-theme-semantic-info pt-6">
                             <div class="flex items-center justify-between mb-4">
                                 <div class="flex items-center gap-2">
-                                    <svg class="w-6 h-6 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <svg class="w-6 h-6 text-theme-semantic-info" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"></path>
                                     </svg>
-                                    <h3 class="text-lg font-bold text-indigo-600 dark:text-indigo-400">Knowledge Base AI (Pola yang Dipelajari)</h3>
+                                    <h3 class="text-lg font-bold text-theme-semantic-info">Knowledge Base AI (Pola yang Dipelajari)</h3>
                                 </div>
-                                <span class="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-full">Sistem akan secara otomatis belajar dari koreksi CSV Anda</span>
+                                <span class="text-[11px] text-theme-text-muted bg-theme-secondary px-2 py-1 rounded-full border border-theme-border-subtle">Sistem akan secara otomatis belajar dari koreksi CSV Anda</span>
                             </div>
                             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                                <div v-for="(pattern, i) in learnedPatterns" :key="i" class="bg-indigo-50 border border-indigo-100 rounded-xl p-4 shadow-sm hover:shadow-md transition">
+                                <div v-for="(pattern, i) in learnedPatterns" :key="i" class="bg-theme-semantic-info/5 border border-theme-semantic-info/20 rounded-xl p-4 shadow-sm hover:shadow-md transition">
                                     <div class="flex items-center justify-between mb-2">
-                                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-indigo-600 text-white">{{ pattern.provider }}</span>
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-theme-semantic-info text-white">{{ pattern.provider }}</span>
                                     </div>
-                                    <p class="text-sm text-slate-700 font-medium leading-snug">
+                                    <p class="text-sm text-theme-text-primary font-medium leading-snug">
                                         {{ pattern.rule_text }}
                                     </p>
                                 </div>
@@ -4380,7 +4437,7 @@ onUnmounted(() => {
                             >
                                 <div
                                     v-if="msg.chart_config"
-                                    class="bg-white p-6 rounded-2xl border border-slate-200 shadow-md flex flex-col h-full"
+                                    class="bg-theme-surface p-6 rounded-2xl border border-theme-border-subtle shadow-sm flex flex-col h-full"
                                 >
                                     <div class="flex items-center justify-between mb-4">
                                         <div class="flex items-center gap-2">
@@ -4817,7 +4874,7 @@ onUnmounted(() => {
                 <!-- Floating Toggle Button -->
                 <button
                     @click="isChatOpen = !isChatOpen"
-                    class="pointer-events-auto w-14 h-14 bg-secondary rounded-full flex items-center justify-center text-white shadow-[0_10px_25px_rgba(254,2,29,0.4)] hover:scale-105 hover:shadow-[0_10px_35px_rgba(254,2,29,0.6)] transition-all relative active:scale-[0.98] transition-transform"
+                    class="pointer-events-auto w-14 h-14 bg-theme-brand-secondary rounded-full flex items-center justify-center text-white shadow-lg hover:scale-105 hover:shadow-xl transition-all relative active:scale-[0.98]"
                 >
                     <span
                         v-if="
@@ -4922,7 +4979,7 @@ onUnmounted(() => {
                             <button 
                                 v-if="comparisonResults[editModalListId][editModalPkg.id].status !== 'matched' && comparisonResults[editModalListId][editModalPkg.id].status !== 'not_found'"
                                 @click="syncWithCsv" 
-                                class="px-3 py-1.5 text-xs font-semibold bg-secondary hover:bg-[#d90017] text-white rounded-md shadow-sm transition flex items-center gap-1.5 active:scale-[0.98] transition-transform">
+                                class="px-3 py-1.5 text-xs font-semibold bg-theme-brand-secondary hover:bg-theme-brand-secondary/90 text-white rounded-md shadow-sm transition flex items-center gap-1.5 active:scale-[0.98] transition-transform">
                                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"></path></svg>
                                 Samakan Data Input
                             </button>
@@ -4966,7 +5023,7 @@ onUnmounted(() => {
 
                 <div class="sticky bottom-0 bg-slate-50 border-t border-slate-200 px-6 py-4 flex items-center justify-end gap-3 z-10">
                     <button @click="closeEditModal" class="px-4 py-2 text-sm font-semibold text-slate-600 hover:text-slate-900 transition active:scale-[0.98] transition-transform">Batal</button>
-                    <button @click="saveRowEdit" :disabled="isSavingModal" class="px-4 py-2 text-sm font-semibold bg-secondary hover:bg-[#d90017] rounded-md text-white transition shadow-md flex items-center gap-2 active:scale-[0.98] transition-transform">
+                    <button @click="saveRowEdit" :disabled="isSavingModal" class="px-4 py-2 text-sm font-semibold bg-theme-brand-secondary hover:bg-theme-brand-secondary/90 rounded-md text-white transition shadow-md flex items-center gap-2 active:scale-[0.98] transition-transform">
                         <svg v-if="isSavingModal" class="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
                         Simpan Perubahan
                     </button>

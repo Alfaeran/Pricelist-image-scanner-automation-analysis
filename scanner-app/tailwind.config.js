@@ -14,11 +14,35 @@ export default {
     theme: {
         extend: {
             fontFamily: {
-                sans: ['Ooredoo', ...defaultTheme.fontFamily.sans],
+                sans: ['Inter', ...defaultTheme.fontFamily.sans],
             },
             colors: {
-                primary: 'rgb(var(--color-primary) / <alpha-value>)',
-                secondary: 'rgb(var(--color-secondary) / <alpha-value>)',
+                theme: {
+                    page: 'var(--bg-page)',
+                    surface: 'var(--bg-surface)',
+                    secondary: 'var(--bg-secondary)',
+                    elevated: 'var(--bg-elevated)',
+                    text: {
+                        primary: 'var(--text-primary)',
+                        secondary: 'var(--text-secondary)',
+                        muted: 'var(--text-muted)',
+                    },
+                    border: {
+                        DEFAULT: 'var(--border-default)',
+                        subtle: 'var(--border-subtle)',
+                    },
+                    brand: {
+                        primary: 'var(--brand-primary)',
+                        secondary: 'var(--brand-secondary)',
+                        accent: 'var(--brand-accent)',
+                    },
+                    semantic: {
+                        success: 'var(--semantic-success)',
+                        warning: 'var(--semantic-warning)',
+                        danger: 'var(--semantic-danger)',
+                        info: 'var(--semantic-info)',
+                    }
+                }
             },
         },
     },

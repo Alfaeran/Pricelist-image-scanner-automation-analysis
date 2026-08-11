@@ -57,13 +57,13 @@ CATEGORIES_ORDER = [
 ]
 
 HEADER_COLORS = {
-    "IM3": "FFC000",
-    "3ID": "FF00FF",
-    "TSEL": "FF0000",
-    "XL": "0070C0",
-    "AXIS": "7030A0",
-    "SF": "FF00FF",
-    "BYU": "FF6600",
+    "IM3": "F59E0B",
+    "3ID": "4F46E5",
+    "TSEL": "DC2626",
+    "XL": "2563EB",
+    "AXIS": "9333EA",
+    "SF": "DB2777",
+    "BYU": "EA580C",
 }
 
 # Konfigurasi Model

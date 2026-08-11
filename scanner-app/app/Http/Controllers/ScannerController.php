@@ -814,7 +814,7 @@ class ScannerController extends Controller
         }
 
         $data = $query->selectRaw("
-            DATE(COALESCE(NULLIF(extracted_packages.image_timestamp, '')::timestamp, pricelists.created_at)) as trend_date,
+            DATE(COALESCE(NULLIF(extracted_packages.image_timestamp, ''), pricelists.created_at)) as trend_date,
             extracted_packages.provider,
             ROUND(AVG(extracted_packages.price), 0) as avg_price,
             ROUND(AVG(extracted_packages.yield_val), 0) as avg_yield,
