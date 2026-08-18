@@ -24,7 +24,8 @@ class ProcessPricelistJob implements ShouldQueue
         public int $pricelistId,
         public array $filePaths,
         public bool $isAppend = false,
-        public ?string $manualTimestamp = null
+        public ?string $manualTimestamp = null,
+        public ?array $locations = null
     ) {
     }
 
@@ -153,7 +154,16 @@ class ProcessPricelistJob implements ShouldQueue
                             return;
 
                         $baselineData = $this->getBaselineData();
-                        DB::transaction(function () use ($data, $pricelist, $baselineData) {
+                        
+                        $filenameToLocation = [];
+                        if ($this->locations && is_array($this->locations)) {
+                            foreach ($this->filePaths as $idx => $path) {
+                                $filename = basename($path);
+                                $filenameToLocation[$filename] = $this->locations[$idx] ?? null;
+                            }
+                        }
+
+                        DB::transaction(function () use ($data, $pricelist, $baselineData, $filenameToLocation) {
                             if (!$this->isAppend) {
                                 $pricelist->packages()->delete();
                             }
@@ -193,6 +203,12 @@ class ProcessPricelistJob implements ShouldQueue
                                 } else {
                                     $isNewProduct = true;
                                 }
+                                $imageFilename = $pkg['image_filename'] ?? null;
+                                $branch = null;
+                                if ($imageFilename && isset($filenameToLocation[$imageFilename])) {
+                                    $branch = $filenameToLocation[$imageFilename];
+                                }
+                                $locDetails = $this->getLocationDetails($branch);
 
                                 ExtractedPackage::create([
                                     'pricelist_id' => $pricelist->id,
@@ -210,7 +226,10 @@ class ProcessPricelistJob implements ShouldQueue
                                     'product_type' => $pkg['product_type'] ?? null,
                                     'image_timestamp' => $this->manualTimestamp ?? ($pkg['image_timestamp'] ?? null),
                                     'image_location' => $pkg['image_location'] ?? null,
-                                    'image_filename' => $pkg['image_filename'] ?? null,
+                                    'image_filename' => $imageFilename,
+                                    'circle' => $locDetails['circle'],
+                                    'region' => $locDetails['region'],
+                                    'branch' => $locDetails['branch'],
                                 ]);
                             }
                         });
@@ -494,5 +513,28 @@ class ProcessPricelistJob implements ShouldQueue
             }
         }
         return $baselineData;
+    }
+
+    private function getLocationDetails(?string $branch): array
+    {
+        if (!$branch) {
+            return ['circle' => null, 'region' => null, 'branch' => null];
+        }
+
+        $centralJava = ['Semarang', 'Surakarta', 'Magelang', 'Salatiga', 'Tegal', 'Pekalongan', 'Cilacap', 'Banyumas', 'Purbalingga', 'Banjarnegara', 'Kebumen', 'Purworejo', 'Wonosobo', 'Boyolali', 'Klaten', 'Sukoharjo', 'Wonogiri', 'Karanganyar', 'Sragen', 'Grobogan', 'Blora', 'Rembang', 'Pati', 'Kudus', 'Jepara', 'Demak', 'Temanggung', 'Kendal', 'Batang', 'Pemalang', 'Brebes'];
+        $eastJava = ['Surabaya', 'Malang', 'Kediri', 'Madiun', 'Mojokerto', 'Pasuruan', 'Probolinggo', 'Batu', 'Blitar', 'Bangkalan', 'Banyuwangi', 'Bojonegoro', 'Bondowoso', 'Gresik', 'Jember', 'Jombang', 'Lamongan', 'Lumajang', 'Magetan', 'Nganjuk', 'Ngawi', 'Pacitan', 'Pamekasan', 'Ponorogo', 'Sampang', 'Sidoarjo', 'Situbondo', 'Sumenep', 'Trenggalek', 'Tuban', 'Tulungagung'];
+        
+        $region = 'Bali Nusra';
+        if (in_array($branch, $centralJava)) {
+            $region = 'Central Java';
+        } elseif (in_array($branch, $eastJava)) {
+            $region = 'East Java';
+        }
+
+        return [
+            'circle' => 'Java Bali Nusra',
+            'region' => $region,
+            'branch' => $branch
+        ];
     }
 }

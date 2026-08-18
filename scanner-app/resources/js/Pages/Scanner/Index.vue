@@ -77,7 +77,8 @@ const props = defineProps({
 });
 
 // ─── State ────────────────────────────────────────────────────────
-const form = useForm({ message: "", images: [], manual_timestamp: "" });
+const form = useForm({ message: "", images: [], locations: [], manual_timestamp: "" });
+const selectedRegions = ref([]);
 const fileInput = ref(null);
 const chatContainer = ref(null);
 const sidebarOpen = ref(true);
@@ -93,6 +94,8 @@ const isFilterOpen = ref(false);
 const insightTimeFilter = ref('Semua Waktu');
 const insightStartDate = ref('');
 const insightEndDate = ref('');
+const insightRegionFilter = ref('Semua Region');
+const insightBranchFilter = ref('Semua Branch');
 const activeSummaryTab = ref('yield');
 const filters = ref({
   providers: [],
@@ -113,6 +116,9 @@ const filters = ref({
 
 // Market Trend States
 const trendDateRange = ref(null);
+const trendCircle = ref('');
+const trendRegion = ref('');
+const trendBranch = ref('');
 const trendMetric = ref('avg_price');
 const trendRawData = ref(null);
 const trendLoading = ref(false);
@@ -235,11 +241,18 @@ onMounted(() => {
   });
   mutationObserver.observe(document.body, { childList: true, subtree: true });
 });
+const branchOptions = [
+  { group: 'Central Java', options: ['Semarang', 'Surakarta', 'Magelang', 'Salatiga', 'Tegal', 'Pekalongan', 'Cilacap', 'Banyumas', 'Purbalingga', 'Banjarnegara', 'Kebumen', 'Purworejo', 'Wonosobo', 'Boyolali', 'Klaten', 'Sukoharjo', 'Wonogiri', 'Karanganyar', 'Sragen', 'Grobogan', 'Blora', 'Rembang', 'Pati', 'Kudus', 'Jepara', 'Demak', 'Temanggung', 'Kendal', 'Batang', 'Pemalang', 'Brebes'] },
+  { group: 'East Java', options: ['Surabaya', 'Malang', 'Kediri', 'Madiun', 'Mojokerto', 'Pasuruan', 'Probolinggo', 'Batu', 'Blitar', 'Bangkalan', 'Banyuwangi', 'Bojonegoro', 'Bondowoso', 'Gresik', 'Jember', 'Jombang', 'Lamongan', 'Lumajang', 'Magetan', 'Nganjuk', 'Ngawi', 'Pacitan', 'Pamekasan', 'Ponorogo', 'Sampang', 'Sidoarjo', 'Situbondo', 'Sumenep', 'Trenggalek', 'Tuban', 'Tulungagung'] },
+  { group: 'Bali Nusra', options: ['Denpasar', 'Badung', 'Bangli', 'Buleleng', 'Gianyar', 'Jembrana', 'Karangasem', 'Klungkung', 'Tabanan', 'Mataram', 'Bima', 'Sumbawa', 'Dompu', 'Lombok Barat', 'Lombok Tengah', 'Lombok Timur', 'Lombok Utara', 'Sumbawa Barat', 'Kupang', 'Ende', 'Flores Timur', 'Sikka', 'Ngada', 'Manggarai', 'Sumba', 'Belu', 'Alor'] }
+];
+
 const providerGroups = [
   {
     parent: 'IOH',
     parentColor: '#FCD116',
-    bgColor: 'rgba(255, 251, 235, 0.8)',
+    parentTextColor: '#ED1C24',
+    bgColor: '#ffffff',
     children: [
       { name: 'IM3', color: '#FCD116', value: 'IM3' },
       { name: '3ID', color: '#D6005E', value: '3' }
@@ -248,7 +261,7 @@ const providerGroups = [
   {
     parent: 'Telkomsel',
     parentColor: '#E60A14',
-    bgColor: 'rgba(254, 242, 242, 0.8)',
+    bgColor: '#ffffff',
     children: [
       { name: 'TELKOMSEL', color: '#E60A14', value: 'TELKOMSEL' },
       { name: 'BY.U', color: '#00B6ED', value: 'BY.U' }
@@ -257,7 +270,7 @@ const providerGroups = [
   {
     parent: 'XL',
     parentColor: '#0B2F75',
-    bgColor: 'rgba(239, 246, 255, 0.8)',
+    bgColor: '#ffffff',
     children: [
       { name: 'XL', color: '#0B2F75', value: 'XL' },
       { name: 'AXIS', color: '#6F2B8C', value: 'AXIS' },
@@ -417,7 +430,11 @@ const fetchTrendData = async () => {
     }
 
     const res = await axios.get(route('api.trends'), {
-      params: { start_date, end_date, filenames: trendFiles.value, _: new Date().getTime() }
+      params: { 
+        start_date, end_date, filenames: trendFiles.value, 
+        circle: trendCircle.value, region: trendRegion.value, branch: trendBranch.value,
+        _: new Date().getTime() 
+      }
     });
     trendRawData.value = res.data;
   } catch (e) {
@@ -624,6 +641,14 @@ const insightFilteredPackages = computed(() => {
     if (!pkgDate || isNaN(pkgDate.getTime())) return false;
     
     if (pkg.category === 'REJECTED') return false;
+    
+    if (insightRegionFilter.value !== 'Semua Region' && pkg.region !== insightRegionFilter.value) {
+      return false;
+    }
+    
+    if (insightBranchFilter.value !== 'Semua Branch' && pkg.branch !== insightBranchFilter.value) {
+      return false;
+    }
     
     if (insightTimeFilter.value === 'Hari Ini') {
       return pkgDate >= startOfToday;
@@ -1531,6 +1556,7 @@ const submit = () => {
     onSuccess: (page) => {
       form.reset();
       form.images = [];
+      selectedRegions.value = [];
       if (fileInput.value) fileInput.value.value = "";
       if (!activeSessionId.value && page.props.pricelists.length > 0) {
         const newest = [...page.props.pricelists].sort(
@@ -2359,6 +2385,9 @@ onMounted(() => {
 watch(trendDateRange, () => {
   fetchTrendData();
 });
+watch([trendCircle, trendRegion, trendBranch], () => {
+  fetchTrendData();
+});
 watch(trendFiles, () => {
   fetchTrendData();
 }, { deep: true });
@@ -2726,14 +2755,18 @@ onUnmounted(() => {
             <!-- Drag & Drop Zone (Input File Image) -->
             <div v-show="inputType === 'scan'" class="w-full relative mb-12">
               <label
-                class="w-full h-[320px] border-2 border-dashed border-theme-border-default hover:border-theme-brand-primary hover:bg-theme-brand-primary/5 focus-within:border-theme-brand-primary focus-within:ring-4 focus-within:ring-theme-brand-primary/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-sm relative overflow-hidden bg-theme-surface"
+                class="w-full min-h-[320px] h-auto border-2 border-dashed border-theme-border-default hover:border-theme-brand-primary hover:bg-theme-brand-primary/5 focus-within:border-theme-brand-primary focus-within:ring-4 focus-within:ring-theme-brand-primary/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-sm relative overflow-hidden bg-theme-surface"
                 :class="{ 'cursor-default pointer-events-none': form.images.length > 0 }"
               >
                 <input
                   type="file"
                   accept="image/*,.zip"
                   multiple
-                  @change="(e) => { form.images = Array.from(e.target.files); }"
+                  @change="(e) => { 
+                    form.images = Array.from(e.target.files); 
+                    form.locations = Array(form.images.length).fill('');
+                    selectedRegions = Array(form.images.length).fill('');
+                  }"
                   class="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
                   :disabled="form.processing || form.images.length > 0"
                 />
@@ -2748,14 +2781,14 @@ onUnmounted(() => {
                 </div>
 
                 <!-- Staging State (Files Selected) -->
-                <div v-if="form.images.length > 0" class="absolute inset-0 bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-8 z-10">
+                <div v-if="form.images.length > 0" class="w-full flex-1 bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-8 z-10">
                   <div class="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center mb-4">
                     <svg class="anime-svg-draw w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                   </div>
                   <h3 class="text-xl font-bold text-slate-800 dark:text-slate-900 mb-2">{{ form.images.length }} File Terpilih</h3>
                   
                   <!-- Progress Bar -->
-                  <div class="w-full max-w-md mt-2 mb-1">
+                  <div class="w-full max-w-md mt-0 mb-4 pointer-events-auto">
                     <div class="flex justify-between text-sm text-slate-500 mb-2 dark:text-slate-900">
                       <span>Ukuran: {{ formatBytes(totalFileSize) }}</span>
                       <span>Batas: 100 MB</span>
@@ -2770,6 +2803,39 @@ onUnmounted(() => {
                     <p v-if="fileSizePercentage >= 100" class="text-red-500 text-sm mt-2 text-center font-medium">Ukuran melebihi batas maksimal!</p>
                   </div>
 
+                  <!-- File List with Location Selectors -->
+                  <div class="w-full max-w-md mb-2 flex flex-col pointer-events-auto">
+                    <label class="text-xs text-slate-500 mb-1 dark:text-slate-900 text-center">Pilih Lokasi (Opsional)</label>
+                    <div class="w-full max-h-40 overflow-y-auto pr-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-2 shadow-inner">
+                      <div v-for="(file, index) in form.images" :key="index" class="flex flex-col mb-3 pb-3 border-b border-slate-100 dark:border-slate-700 last:mb-0 last:pb-0 last:border-0">
+                        <div class="text-sm font-medium text-slate-700 dark:text-slate-300 truncate mb-1" :title="file.name">
+                          {{ file.name }}
+                        </div>
+                        <div class="flex flex-col sm:flex-row gap-2 w-full mt-0">
+                        <select v-model="selectedRegions[index]" @change="form.locations[index] = ''" class="flex-1 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
+                          <option value="">-- Pilih Region --</option>
+                          <option v-for="group in branchOptions" :key="group.group" :value="group.group">{{ group.group }}</option>
+                        </select>
+                        <div class="flex-1 w-full">
+                          <input 
+                            type="text"
+                            v-model="form.locations[index]" 
+                            :list="'branch-list-' + index" 
+                            :disabled="!selectedRegions[index]"
+                            placeholder="-- Ketik / Pilih Branch --"
+                            class="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                          <datalist :id="'branch-list-' + index">
+                            <template v-if="selectedRegions[index]">
+                              <option v-for="opt in branchOptions.find(g => g.group === selectedRegions[index])?.options || []" :key="opt" :value="opt"></option>
+                            </template>
+                          </datalist>
+                        </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
                   <!-- Timestamp Override -->
                   <div class="w-full max-w-xs mt-1 mb-2 flex flex-col pointer-events-auto">
                     <label class="text-xs text-slate-500 mb-1 dark:text-slate-900">Atur Waktu (Opsional)</label>
@@ -2778,7 +2844,7 @@ onUnmounted(() => {
 
                   <div class="flex gap-4 mt-3 pointer-events-auto">
                     <button 
-                      @click.stop="form.images = []" 
+                      @click.stop="() => { form.images = []; form.locations = []; selectedRegions = []; }" 
                       class="px-5 py-2.5 rounded-xl border border-theme-border-default text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/10 transition-colors font-medium active:scale-[0.98] transition-transform"
                     >
                       Batal
@@ -2807,7 +2873,7 @@ onUnmounted(() => {
             <!-- Input Data (CSV/Excel) -->
             <div v-show="inputType === 'data'" class="w-full relative mb-12">
               <label
-                class="w-full h-[320px] border-2 border-dashed border-theme-border-default hover:border-theme-brand-secondary hover:bg-theme-brand-secondary/5 focus-within:border-theme-brand-secondary focus-within:ring-4 focus-within:ring-theme-brand-secondary/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-sm relative overflow-hidden bg-theme-surface"
+                class="w-full min-h-[320px] h-auto border-2 border-dashed border-theme-border-default hover:border-theme-brand-secondary hover:bg-theme-brand-secondary/5 focus-within:border-theme-brand-secondary focus-within:ring-4 focus-within:ring-theme-brand-secondary/20 transition-all rounded-3xl flex flex-col items-center justify-center cursor-pointer group shadow-sm relative overflow-hidden bg-theme-surface"
                 :class="{ 'cursor-default pointer-events-none': uploadDataForm.data_file }"
               >
                 <input
@@ -2828,7 +2894,7 @@ onUnmounted(() => {
                 </div>
 
                 <!-- Staging State (File Selected) -->
-                <div v-if="uploadDataForm.data_file" class="absolute inset-0 bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-8 z-10">
+                <div v-if="uploadDataForm.data_file" class="w-full flex-1 bg-slate-50 dark:bg-slate-900 flex flex-col items-center justify-center p-8 z-10">
                   <div class="w-16 h-16 bg-theme-brand-primary/10 rounded-full flex items-center justify-center mb-4">
                     <svg class="anime-svg-draw w-8 h-8 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                   </div>
@@ -2908,6 +2974,7 @@ onUnmounted(() => {
                       (e) => {
                         if (e.target.files.length > 0) {
                           form.images = Array.from(e.target.files);
+                          form.locations = Array(form.images.length).fill('');
                           activeUploadMode = 'image';
                           showActiveUploadModal = true;
                         }
@@ -3325,6 +3392,16 @@ onUnmounted(() => {
                           <option>Tahun Ini</option>
                           <option value="Rentang Waktu">Pilih Tanggal / Rentang</option>
                         </select>
+                        <select v-model="insightRegionFilter" @change="insightBranchFilter = 'Semua Branch'" class="bg-white text-sm text-slate-800 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 shadow-sm">
+                          <option>Semua Region</option>
+                          <option v-for="group in branchOptions" :key="group.group" :value="group.group">{{ group.group }}</option>
+                        </select>
+                        <select v-model="insightBranchFilter" :disabled="insightRegionFilter === 'Semua Region'" class="bg-white text-sm text-slate-800 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:border-indigo-500 shadow-sm disabled:opacity-50">
+                          <option>Semua Branch</option>
+                          <template v-if="insightRegionFilter !== 'Semua Region'">
+                            <option v-for="opt in branchOptions.find(g => g.group === insightRegionFilter)?.options || []" :key="opt" :value="opt">{{ opt }}</option>
+                          </template>
+                        </select>
                       </div>
                       <select v-model="marketSummaryFilter" class="bg-white border border-slate-300 text-slate-800 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block px-3 py-1.5 outline-none shadow-sm">
                         <option value="all">Keseluruhan</option>
@@ -3595,7 +3672,7 @@ onUnmounted(() => {
                 
                 <!-- Grouped Providers -->
                 <div v-for="group in providerGroups" :key="group.parent" class="flex items-stretch rounded-lg overflow-hidden border border-slate-200/60 shadow-xs" :style="{ backgroundColor: group.bgColor }">
-                  <button @click="toggleYieldProviderGroup(group.parent)" class="px-3 py-1.5 text-xs font-extrabold flex items-center justify-center transition-opacity hover:opacity-90" :style="{ backgroundColor: group.parentColor, color: '#fff' }">
+                  <button @click="toggleYieldProviderGroup(group.parent)" class="px-3 py-1.5 text-xs font-extrabold flex items-center justify-center transition-opacity hover:opacity-90" :style="{ backgroundColor: group.parentColor, color: group.parentTextColor || '#fff' }">
                     {{ group.parent }}
                   </button>
                   <button
@@ -3752,6 +3829,25 @@ onUnmounted(() => {
                     <option value="avg_yield">Rata-rata Yield</option>
                     <option value="count">Jumlah Paket</option>
                   </select>
+
+                  <select v-model="trendCircle" class="bg-white text-slate-800 border border-slate-300 rounded-lg text-xs font-bold py-1.5 px-3 focus:ring-blue-500 focus:border-blue-500 shadow-sm transition active:scale-[0.98]">
+                    <option value="">Semua Circle</option>
+                    <option value="Java Bali Nusra">Java Bali Nusra</option>
+                  </select>
+                  
+                  <select v-model="trendRegion" class="bg-white text-slate-800 border border-slate-300 rounded-lg text-xs font-bold py-1.5 px-3 focus:ring-blue-500 focus:border-blue-500 shadow-sm transition active:scale-[0.98]">
+                    <option value="">Semua Region</option>
+                    <option value="Central Java">Central Java</option>
+                    <option value="East Java">East Java</option>
+                    <option value="Bali Nusra">Bali Nusra</option>
+                  </select>
+                  
+                  <select v-model="trendBranch" class="bg-white text-slate-800 border border-slate-300 rounded-lg text-xs font-bold py-1.5 px-3 focus:ring-blue-500 focus:border-blue-500 shadow-sm max-w-[140px] truncate transition active:scale-[0.98]">
+                    <option value="">Semua Branch</option>
+                    <optgroup v-for="group in branchOptions" :key="group.group" :label="group.group">
+                      <option v-for="opt in group.options" :key="opt" :value="opt">{{ opt }}</option>
+                    </optgroup>
+                  </select>
                   
                   <div class="relative min-w-[160px]">
                     <button @click="isTrendFileFilterOpen = !isTrendFileFilterOpen" class="w-full text-left bg-white text-xs font-bold text-slate-800 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm flex justify-between items-center transition active:scale-[0.98]">
@@ -3810,7 +3906,7 @@ onUnmounted(() => {
                 <div class="flex flex-wrap justify-center items-center gap-2.5">
                   <!-- Grouped Providers -->
                   <div v-for="group in providerGroups" :key="group.parent" class="flex items-stretch rounded-lg overflow-hidden border border-slate-200/60 shadow-xs" :style="{ backgroundColor: group.bgColor }">
-                    <button @click="toggleTrendProviderGroup(group.parent)" class="px-3 py-1.5 text-xs font-extrabold flex items-center justify-center transition-opacity hover:opacity-90" :style="{ backgroundColor: group.parentColor, color: '#fff' }">
+                    <button @click="toggleTrendProviderGroup(group.parent)" class="px-3 py-1.5 text-xs font-extrabold flex items-center justify-center transition-opacity hover:opacity-90" :style="{ backgroundColor: group.parentColor, color: group.parentTextColor || '#fff' }">
                       {{ group.parent }}
                     </button>
                     <button
@@ -5092,7 +5188,7 @@ onUnmounted(() => {
           <h3 class="font-bold text-slate-800 dark:text-slate-100 text-lg">
             {{ activeUploadMode === 'image' ? 'Upload Gambar Pricelist' : 'Upload Data Excel/CSV' }}
           </h3>
-          <button @click="showActiveUploadModal = false; form.images = [];" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+          <button @click="showActiveUploadModal = false; form.images = []; form.locations = [];" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
           </button>
         </div>
@@ -5106,7 +5202,7 @@ onUnmounted(() => {
             <h3 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">{{ form.images.length }} File Terpilih</h3>
             
             <!-- Progress Bar for Images -->
-            <div class="w-full mt-2 mb-4">
+            <div class="w-full mt-0 mb-4">
               <div class="flex justify-between text-sm text-slate-500 dark:text-slate-400 mb-2">
                 <span>Ukuran: {{ formatBytes(totalFileSize) }}</span>
                 <span>Batas: 100 MB</span>
@@ -5120,6 +5216,40 @@ onUnmounted(() => {
               </div>
               <p v-if="fileSizePercentage >= 100" class="text-red-500 text-sm mt-2 text-center font-medium">Ukuran melebihi batas maksimal!</p>
             </div>
+
+            <!-- File List with Location Selectors -->
+            <div class="w-full max-w-md mb-4 flex flex-col pointer-events-auto">
+              <label class="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">Pilih Lokasi (Opsional)</label>
+              <div class="w-full max-h-40 overflow-y-auto pr-2 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 p-2 shadow-inner">
+                <div v-for="(file, index) in form.images" :key="index" class="flex flex-col mb-3 pb-3 border-b border-slate-200 dark:border-slate-700 last:mb-0 last:pb-0 last:border-0">
+                  <div class="text-sm font-medium text-slate-700 dark:text-slate-300 truncate mb-1" :title="file.name">
+                    {{ file.name }}
+                  </div>
+                  <div class="flex flex-col sm:flex-row gap-2 w-full mt-0">
+                    <select v-model="selectedRegions[index]" @change="form.locations[index] = ''" class="flex-1 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
+                      <option value="">-- Pilih Region --</option>
+                      <option v-for="group in branchOptions" :key="group.group" :value="group.group">{{ group.group }}</option>
+                    </select>
+                    <div class="flex-1 w-full">
+                      <input 
+                        type="text"
+                        v-model="form.locations[index]" 
+                        :list="'branch-list-modal-' + index" 
+                        :disabled="!selectedRegions[index]"
+                        placeholder="-- Ketik / Pilih Branch --"
+                        class="w-full text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                      <datalist :id="'branch-list-modal-' + index">
+                        <template v-if="selectedRegions[index]">
+                          <option v-for="opt in branchOptions.find(g => g.group === selectedRegions[index])?.options || []" :key="opt" :value="opt"></option>
+                        </template>
+                      </datalist>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
           </template>
 
           <!-- Excel Mode UI -->
