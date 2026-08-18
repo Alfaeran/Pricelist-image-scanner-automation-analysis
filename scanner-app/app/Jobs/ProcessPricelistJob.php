@@ -152,7 +152,8 @@ class ProcessPricelistJob implements ShouldQueue
                         if ($pricelist->fresh()->status === 'cancelled')
                             return;
 
-                        DB::transaction(function () use ($data, $pricelist) {
+                        $baselineData = $this->getBaselineData();
+                        DB::transaction(function () use ($data, $pricelist, $baselineData) {
                             if (!$this->isAppend) {
                                 $pricelist->packages()->delete();
                             }
@@ -175,6 +176,26 @@ class ProcessPricelistJob implements ShouldQueue
                                 
                                 $isAnomaly = ($price <= 0 || $gb <= 0 || $yield_val > 50000);
 
+                                $providerStr = strtoupper(trim($pkg['provider'] ?? 'UNKNOWN'));
+                                if ($providerStr == 'SF') $providerStr = 'SMARTFREN';
+                                elseif ($providerStr == 'TSEL') $providerStr = 'TELKOMSEL';
+                                elseif ($providerStr == '3ID') $providerStr = '3';
+                                elseif ($providerStr == 'BYU') $providerStr = 'BY.U';
+
+                                $baselineKey = $providerStr . '_' . $gb . '_' . $days;
+                                $isNewProduct = false;
+                                $isPriceChanged = false;
+                                $baselinePrice = null;
+
+                                if (isset($baselineData[$baselineKey])) {
+                                    $baselinePrice = $baselineData[$baselineKey]['price'];
+                                    if ($price !== $baselinePrice) {
+                                        $isPriceChanged = true;
+                                    }
+                                } else {
+                                    $isNewProduct = true;
+                                }
+
                                 ExtractedPackage::create([
                                     'pricelist_id' => $pricelist->id,
                                     'provider' => $pkg['provider'] ?? 'UNKNOWN',
@@ -184,6 +205,9 @@ class ProcessPricelistJob implements ShouldQueue
                                     'days' => $days,
                                     'yield_val' => $yield_val,
                                     'is_anomaly' => $isAnomaly,
+                                    'is_new_product' => $isNewProduct,
+                                    'is_price_changed' => $isPriceChanged,
+                                    'baseline_price' => $baselinePrice,
                                     'category' => $isRejected ? 'REJECTED' : $this->categorize((int) $pkg['days'], (int) $pkg['price']),
                                     'product_type' => $pkg['product_type'] ?? null,
                                     'image_timestamp' => $this->manualTimestamp ?? ($pkg['image_timestamp'] ?? null),
@@ -339,6 +363,7 @@ class ProcessPricelistJob implements ShouldQueue
 
     private function processDataFile(string $fullPath, Pricelist $pricelist): void
     {
+        $baselineData = $this->getBaselineData();
         $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
         $csvData = [];
         
@@ -374,6 +399,20 @@ class ProcessPricelistJob implements ShouldQueue
             $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
             $days = (int) preg_replace('/[^\d]/', '', $row[5] ?? '');
             
+            $baselineKey = $provider . '_' . $gb . '_' . $days;
+            $isNewProduct = false;
+            $isPriceChanged = false;
+            $baselinePrice = null;
+
+            if (isset($baselineData[$baselineKey])) {
+                $baselinePrice = $baselineData[$baselineKey]['price'];
+                if ($price !== $baselinePrice) {
+                    $isPriceChanged = true;
+                }
+            } else {
+                $isNewProduct = true;
+            }
+
             \App\Models\ExtractedPackage::create([
                 'pricelist_id' => $pricelist->id,
                 'provider' => $provider,
@@ -383,6 +422,9 @@ class ProcessPricelistJob implements ShouldQueue
                 'days' => $days,
                 'yield_val' => app(\App\Http\Controllers\ScannerController::class)->calculateYield("Paket " . $provider, $gb, $days, $price),
                 'is_anomaly' => ($price <= 0 || $gb <= 0 || (app(\App\Http\Controllers\ScannerController::class)->calculateYield("Paket " . $provider, $gb, $days, $price)) > 50000),
+                'is_new_product' => $isNewProduct,
+                'is_price_changed' => $isPriceChanged,
+                'baseline_price' => $baselinePrice,
                 'category' => $this->categorize($days, $price),
                 'product_type' => 'Data',
                 'image_timestamp' => $this->manualTimestamp,
@@ -404,5 +446,55 @@ class ProcessPricelistJob implements ShouldQueue
             'status' => 'failed',
             'error_message' => 'Proses gagal (kemungkinan karena melampaui batas waktu/timeout). Silakan ulangi.'
         ]);
+    }
+
+    private function getBaselineData(): array
+    {
+        $baselineData = [];
+        $fullPath = base_path('List produk.csv');
+        if (file_exists($fullPath)) {
+            if (($handle = fopen($fullPath, "r")) !== FALSE) {
+                $isHeader = true;
+                while (($row = fgetcsv($handle, 1000, ",")) !== FALSE) {
+                    if ($isHeader) {
+                        $isHeader = false;
+                        continue;
+                    }
+                    if (count($row) < 11) continue;
+                    
+                    $provider = strtoupper(trim($row[1]));
+                    if (!$provider) continue;
+                    
+                    if ($provider == 'SF') $provider = 'SMARTFREN';
+                    elseif ($provider == 'TSEL') $provider = 'TELKOMSEL';
+                    elseif ($provider == '3ID') $provider = '3';
+                    elseif ($provider == 'BYU') $provider = 'BY.U';
+                    
+                    $priceStr = $row[6];
+                    if (empty(trim($priceStr))) {
+                        $priceStr = $row[4];
+                    }
+                    $price = (int) preg_replace('/[^\d]/', '', $priceStr ?? '');
+                    
+                    $gbStr = str_replace(',', '.', $row[7] ?? '');
+                    $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
+                    
+                    $daysStr = $row[10] ?? '';
+                    if (strtolower(trim($daysStr)) === 'follow sim') {
+                        $days = 0;
+                    } else {
+                        $days = (int) preg_replace('/[^\d]/', '', $daysStr);
+                    }
+                    
+                    $key = $provider . '_' . $gb . '_' . $days;
+                    $baselineData[$key] = [
+                        'price' => $price,
+                        'name' => $row[2]
+                    ];
+                }
+                fclose($handle);
+            }
+        }
+        return $baselineData;
     }
 }

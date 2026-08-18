@@ -116,15 +116,44 @@ const trendLoading = ref(false);
 const trendFiles = ref([]);
 const isTrendFileFilterOpen = ref(false);
 const marketSummaryFilter = ref('all');
-const trendHiddenProviders = ref([]);
+const trendActiveProviders = ref([]);
 
 const toggleTrendProvider = (prov) => {
-  const idx = trendHiddenProviders.value.indexOf(prov);
-  if (idx > -1) {
-    trendHiddenProviders.value.splice(idx, 1);
+  if (trendActiveProviders.value.length === 0) {
+    trendActiveProviders.value.push(prov);
   } else {
-    trendHiddenProviders.value.push(prov);
+    const idx = trendActiveProviders.value.indexOf(prov);
+    if (idx > -1) {
+      trendActiveProviders.value.splice(idx, 1);
+    } else {
+      trendActiveProviders.value.push(prov);
+    }
   }
+};
+
+const toggleTrendProviderGroup = (groupName) => {
+  const group = providerGroups.find(g => g.parent === groupName);
+  if (!group) return;
+  const childValues = group.children.map(c => c.value);
+
+  if (trendActiveProviders.value.length === 0) {
+    trendActiveProviders.value = [...childValues];
+  } else {
+    const allActive = childValues.every(val => trendActiveProviders.value.includes(val));
+    if (allActive) {
+      trendActiveProviders.value = trendActiveProviders.value.filter(p => !childValues.includes(p));
+    } else {
+      childValues.forEach(val => {
+        if (!trendActiveProviders.value.includes(val)) {
+          trendActiveProviders.value.push(val);
+        }
+      });
+    }
+  }
+};
+
+const isTrendProviderActive = (prov) => {
+  return trendActiveProviders.value.length === 0 || trendActiveProviders.value.includes(prov);
 };
 
 const trendProviders = computed(() => {
@@ -203,15 +232,46 @@ onMounted(() => {
   });
   mutationObserver.observe(document.body, { childList: true, subtree: true });
 });
+const providerGroups = [
+  {
+    parent: 'IOH',
+    parentColor: '#FCD116',
+    bgColor: 'rgba(255, 251, 235, 0.8)',
+    children: [
+      { name: 'IM3', color: '#FCD116', value: 'IM3' },
+      { name: '3ID', color: '#D6005E', value: '3' }
+    ]
+  },
+  {
+    parent: 'Telkomsel',
+    parentColor: '#E60A14',
+    bgColor: 'rgba(254, 242, 242, 0.8)',
+    children: [
+      { name: 'TELKOMSEL', color: '#E60A14', value: 'TELKOMSEL' },
+      { name: 'BY.U', color: '#00B6ED', value: 'BY.U' }
+    ]
+  },
+  {
+    parent: 'XL',
+    parentColor: '#0B2F75',
+    bgColor: 'rgba(239, 246, 255, 0.8)',
+    children: [
+      { name: 'XL', color: '#0B2F75', value: 'XL' },
+      { name: 'AXIS', color: '#6F2B8C', value: 'AXIS' },
+      { name: 'SMARTFREN', color: '#D1006B', value: 'SMARTFREN' }
+    ]
+  }
+];
+
 const getProviderColor = (providerName) => {
   const prov = providerName.toUpperCase();
-  if (prov === '3' || prov.includes('TRI')) return '#4F46E5'; // Indigo-600
-  if (prov.includes('AXIS')) return '#9333EA'; // Purple-600
-  if (prov.includes('XL')) return '#2563EB'; // Blue-600
-  if (prov.includes('BY.U') || prov.includes('BYU')) return '#EA580C'; // Orange-600
-  if (prov.includes('TELKOMSEL') || prov.includes('TSEL')) return '#DC2626'; // Red-600
-  if (prov.includes('SMARTFREN') || prov.includes('SF')) return '#DB2777'; // Pink-600
-  if (prov.includes('INDOSAT') || prov.includes('IM3')) return '#F59E0B'; // Amber-500
+  if (prov === '3' || prov.includes('TRI') || prov === '3ID') return '#D6005E'; 
+  if (prov.includes('AXIS')) return '#6F2B8C'; 
+  if (prov.includes('XL')) return '#0B2F75'; 
+  if (prov.includes('BY.U') || prov.includes('BYU')) return '#00B6ED'; 
+  if (prov.includes('TELKOMSEL') || prov.includes('TSEL')) return '#E60A14'; 
+  if (prov.includes('SMARTFREN') || prov.includes('SF')) return '#D1006B'; 
+  if (prov.includes('INDOSAT') || prov.includes('IM3')) return '#FCD116';
   
   // Hash string to color for unknown providers
   let hash = 0;
@@ -233,17 +293,18 @@ const trendChartData = computed(() => {
   const datasets = [];
   
   for (const [provider, data] of Object.entries(trendRawData.value.providers)) {
-    if (trendHiddenProviders.value.includes(provider)) continue;
+    if (!isTrendProviderActive(provider)) continue;
     
     datasets.push({
       label: provider,
-      backgroundColor: getProviderColor(provider) + 'CC', // add transparency
+      backgroundColor: getProviderColor(provider) + '1A',
       borderColor: getProviderColor(provider),
       data: data[trendMetric.value],
-      borderWidth: 1,
-      borderRadius: 4,
-      barPercentage: 0.8,
-      categoryPercentage: 0.8
+      borderWidth: 3,
+      pointRadius: 4,
+      pointHoverRadius: 6,
+      tension: 0.3,
+      fill: false
     });
   }
   
@@ -490,9 +551,16 @@ const filteredPackagesList = computed(() => {
     if (f.dateStart && tsStr && !tsStr.toLowerCase().includes(f.dateStart.toLowerCase())) return false;
     
     if (f.flags && f.flags.length > 0) {
+      let matched = false;
+      
       const comp = comparisonResults.value[activeSessionId.value]?.[pkg.id];
       const status = comp ? comp.status : null;
-      if (!f.flags.includes(status)) return false;
+      if (f.flags.includes(status)) matched = true;
+      
+      if (f.flags.includes('is_new_product') && pkg.is_new_product) matched = true;
+      if (f.flags.includes('is_price_changed') && pkg.is_price_changed) matched = true;
+      
+      if (!matched) return false;
     }
 
     return true;
@@ -789,15 +857,44 @@ const competitiveHeatmapData = computed(() => {
 });
 
 // ─── Competitive Yield Landscape (Monthly & Sachet) ────────────────────────
-const yieldLandscapeHiddenProviders = ref([]);
+const yieldLandscapeActiveProviders = ref([]);
 
 const toggleYieldProvider = (prov) => {
-  const idx = yieldLandscapeHiddenProviders.value.indexOf(prov);
-  if (idx > -1) {
-    yieldLandscapeHiddenProviders.value.splice(idx, 1);
+  if (yieldLandscapeActiveProviders.value.length === 0) {
+    yieldLandscapeActiveProviders.value.push(prov);
   } else {
-    yieldLandscapeHiddenProviders.value.push(prov);
+    const idx = yieldLandscapeActiveProviders.value.indexOf(prov);
+    if (idx > -1) {
+      yieldLandscapeActiveProviders.value.splice(idx, 1);
+    } else {
+      yieldLandscapeActiveProviders.value.push(prov);
+    }
   }
+};
+
+const toggleYieldProviderGroup = (groupName) => {
+  const group = providerGroups.find(g => g.parent === groupName);
+  if (!group) return;
+  const childValues = group.children.map(c => c.value);
+
+  if (yieldLandscapeActiveProviders.value.length === 0) {
+    yieldLandscapeActiveProviders.value = [...childValues];
+  } else {
+    const allActive = childValues.every(val => yieldLandscapeActiveProviders.value.includes(val));
+    if (allActive) {
+      yieldLandscapeActiveProviders.value = yieldLandscapeActiveProviders.value.filter(p => !childValues.includes(p));
+    } else {
+      childValues.forEach(val => {
+        if (!yieldLandscapeActiveProviders.value.includes(val)) {
+          yieldLandscapeActiveProviders.value.push(val);
+        }
+      });
+    }
+  }
+};
+
+const isYieldProviderActive = (prov) => {
+  return yieldLandscapeActiveProviders.value.length === 0 || yieldLandscapeActiveProviders.value.includes(prov);
 };
 
 const yieldLandscapeProviders = computed(() => {
@@ -840,7 +937,7 @@ const monthlyYieldChartData = computed(() => {
           const yieldVal = Number(pkg.yield_val) > 0 ? Number(pkg.yield_val) : Math.round(price / gb);
           const idx = getEupBucketIndex(price);
           
-          if (!yieldLandscapeHiddenProviders.value.includes(prov)) {
+          if (isYieldProviderActive(prov)) {
             bucketYields[idx].push(yieldVal);
           }
           
@@ -870,7 +967,7 @@ const monthlyYieldChartData = computed(() => {
         borderWidth: 1,
         pointRadius: 6,
         pointHoverRadius: 8,
-        hidden: yieldLandscapeHiddenProviders.value.includes(prov),
+        hidden: !isYieldProviderActive(prov),
         order: 1
       });
     }
@@ -930,7 +1027,7 @@ const sachetYieldChartData = computed(() => {
           const yieldVal = Number(pkg.yield_val) > 0 ? Number(pkg.yield_val) : Math.round(price / gb);
           const idx = days - 1;
           
-          if (!yieldLandscapeHiddenProviders.value.includes(prov)) {
+          if (isYieldProviderActive(prov)) {
             bucketYields[idx].push(yieldVal);
           }
           
@@ -960,7 +1057,7 @@ const sachetYieldChartData = computed(() => {
         borderWidth: 1,
         pointRadius: 6,
         pointHoverRadius: 8,
-        hidden: yieldLandscapeHiddenProviders.value.includes(prov),
+        hidden: !isYieldProviderActive(prov),
         order: 1
       });
     }
@@ -1387,6 +1484,14 @@ const scrollToBottom = () => {
 const parseMarkdown = (text) => {
   if (!text) return "";
   return marked.parse(text);
+};
+
+const showActiveUploadModal = ref(false);
+const activeUploadMode = ref('image'); // 'image' or 'excel'
+
+const processActiveUpload = () => {
+  showActiveUploadModal.value = false;
+  submit();
 };
 
 const submit = () => {
@@ -2644,7 +2749,7 @@ onUnmounted(() => {
                     <div class="w-full bg-slate-200 rounded-full h-3 overflow-hidden">
                       <div 
                         class="h-full rounded-full transition-all duration-500"
-                        :class="fileSizePercentage >= 100 ? 'bg-red-500' : 'bg-primary dark:bg-indigo-500'"
+                        :class="fileSizePercentage >= 100 ? 'bg-theme-semantic-danger' : 'bg-theme-brand-primary'"
                         :style="{ width: fileSizePercentage + '%' }"
                       ></div>
                     </div>
@@ -2759,13 +2864,6 @@ onUnmounted(() => {
                 {{ activeSession.filename }}
               </h2>
               <div class="flex gap-3 items-center">
-                <div class="w-48">
-                  <VueDatePicker
-                    v-model="form.manual_timestamp"
-                    :enable-time-picker="true"
-                    placeholder="Atur Waktu (Opsional)"
-                  />
-                </div>
                 <label
                   class="cursor-pointer px-4 py-2 bg-theme-surface border border-theme-border-default text-theme-text-primary hover:bg-theme-secondary rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
                   :class="{
@@ -2794,10 +2892,11 @@ onUnmounted(() => {
                     multiple
                     @change="
                       (e) => {
-                        form.images = Array.from(
-                          e.target.files,
-                        );
-                        submit();
+                        if (e.target.files.length > 0) {
+                          form.images = Array.from(e.target.files);
+                          activeUploadMode = 'image';
+                          showActiveUploadModal = true;
+                        }
                       }
                     "
                     class="hidden"
@@ -2833,10 +2932,11 @@ onUnmounted(() => {
                     multiple
                     @change="
                       (e) => {
-                        form.images = Array.from(
-                          e.target.files,
-                        );
-                        submit();
+                        if (e.target.files.length > 0) {
+                          form.images = Array.from(e.target.files);
+                          activeUploadMode = 'excel';
+                          showActiveUploadModal = true;
+                        }
                       }
                     "
                     class="hidden"
@@ -3478,16 +3578,35 @@ onUnmounted(() => {
             <div class="flex flex-wrap items-center justify-between gap-4 mb-8 px-4 py-3 bg-slate-50 border border-slate-200/80 rounded-xl shadow-xs">
               <div class="flex flex-wrap items-center gap-2.5">
                 <span class="text-xs font-bold text-slate-800 mr-2">Provider:</span>
+                
+                <!-- Grouped Providers -->
+                <div v-for="group in providerGroups" :key="group.parent" class="flex items-stretch rounded-lg overflow-hidden border border-slate-200/60 shadow-xs" :style="{ backgroundColor: group.bgColor }">
+                  <button @click="toggleYieldProviderGroup(group.parent)" class="px-3 py-1.5 text-xs font-extrabold flex items-center justify-center transition-opacity hover:opacity-90" :style="{ backgroundColor: group.parentColor, color: '#fff' }">
+                    {{ group.parent }}
+                  </button>
+                  <button
+                    v-for="child in group.children"
+                    :key="child.value"
+                    @click="toggleYieldProvider(child.value)"
+                    class="px-3 py-1.5 text-xs font-extrabold transition-all duration-200 border-l border-slate-200/30 flex items-center gap-2"
+                    :class="isYieldProviderActive(child.value) ? 'opacity-100' : 'opacity-40 hover:opacity-60'"
+                    :style="{ color: '#1e293b' }"
+                  >
+                    <span>{{ child.name }}</span>
+                  </button>
+                </div>
+                
+                <!-- Standalone Providers -->
                 <button
-                  v-for="prov in yieldLandscapeProviders"
+                  v-for="prov in yieldLandscapeProviders.filter(p => !providerGroups.some(g => g.children.some(c => c.value === p)))"
                   :key="prov"
                   @click="toggleYieldProvider(prov)"
                   class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 border active:scale-[0.98] transition-transform"
-                  :class="!yieldLandscapeHiddenProviders.includes(prov)
+                  :class="isYieldProviderActive(prov)
                     ? 'bg-white text-slate-800 border-slate-300 shadow-xs ring-1 ring-slate-200/50'
                     : 'bg-slate-200/60 text-slate-400 border-transparent opacity-60 hover:opacity-80'"
                 >
-                  <span class="w-2.5 h-2.5 rounded-full shadow-xs" :style="{ backgroundColor: !yieldLandscapeHiddenProviders.includes(prov) ? getProviderColor(prov) : '#94a3b8' }"></span>
+                  <span class="w-2.5 h-2.5 rounded-full shadow-xs" :style="{ backgroundColor: isYieldProviderActive(prov) ? getProviderColor(prov) : '#94a3b8' }"></span>
                   <span>{{ prov }}</span>
                 </button>
               </div>
@@ -3675,16 +3794,34 @@ onUnmounted(() => {
               <!-- Custom Interactive Legend for Market Trend -->
               <div v-if="trendProviders.length > 0" class="flex flex-wrap items-center justify-center gap-4 mb-6 px-4 py-3 bg-theme-surface border border-theme-border-subtle rounded-xl shadow-sm">
                 <div class="flex flex-wrap justify-center items-center gap-2.5">
+                  <!-- Grouped Providers -->
+                  <div v-for="group in providerGroups" :key="group.parent" class="flex items-stretch rounded-lg overflow-hidden border border-slate-200/60 shadow-xs" :style="{ backgroundColor: group.bgColor }">
+                    <button @click="toggleTrendProviderGroup(group.parent)" class="px-3 py-1.5 text-xs font-extrabold flex items-center justify-center transition-opacity hover:opacity-90" :style="{ backgroundColor: group.parentColor, color: '#fff' }">
+                      {{ group.parent }}
+                    </button>
+                    <button
+                      v-for="child in group.children"
+                      :key="child.value"
+                      @click="toggleTrendProvider(child.value)"
+                      class="px-3 py-1.5 text-xs font-extrabold transition-all duration-200 border-l border-slate-200/30 flex items-center gap-2"
+                      :class="isTrendProviderActive(child.value) ? 'opacity-100' : 'opacity-40 hover:opacity-60'"
+                      :style="{ color: '#1e293b' }"
+                    >
+                      <span>{{ child.name }}</span>
+                    </button>
+                  </div>
+                  
+                  <!-- Standalone Providers -->
                   <button
-                    v-for="prov in trendProviders"
+                    v-for="prov in trendProviders.filter(p => !providerGroups.some(g => g.children.some(c => c.value === p)))"
                     :key="prov"
                     @click="toggleTrendProvider(prov)"
                     class="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all duration-200 border active:scale-[0.98] transition-transform"
-                    :class="!trendHiddenProviders.includes(prov)
+                    :class="isTrendProviderActive(prov)
                       ? 'bg-theme-bg-primary text-theme-text-primary border-slate-300 shadow-sm ring-1 ring-slate-200/50'
                       : 'bg-slate-200/60 text-slate-400 border-transparent opacity-60 hover:opacity-80'"
                   >
-                    <span class="w-2.5 h-2.5 rounded-full shadow-sm" :style="{ backgroundColor: !trendHiddenProviders.includes(prov) ? getProviderColor(prov) : '#94a3b8' }"></span>
+                    <span class="w-2.5 h-2.5 rounded-full shadow-sm" :style="{ backgroundColor: isTrendProviderActive(prov) ? getProviderColor(prov) : '#94a3b8' }"></span>
                     <span>{{ prov }}</span>
                   </button>
                 </div>
@@ -3697,7 +3834,7 @@ onUnmounted(() => {
                     <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
                 </div>
-                <Bar v-if="trendChartData.labels.length > 0" :data="trendChartData" :options="trendChartOptions" />
+                <Line v-if="trendChartData.labels.length > 0" :data="trendChartData" :options="trendChartOptions" />
                 <div v-else-if="!trendLoading" class="flex flex-col items-center justify-center h-full text-slate-400 italic p-4 text-center">
                   <p>Belum ada data trend untuk rentang waktu ini.</p>
                 </div>
@@ -3854,6 +3991,14 @@ onUnmounted(() => {
                               <input type="checkbox" value="synced" v-model="filters.flags" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
                               <span class="w-2.5 h-2.5 rounded-full bg-blue-500 shadow-xs inline-block"></span>
                               Telah Disamakan
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                              <input type="checkbox" value="is_new_product" v-model="filters.flags" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
+                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 border border-green-200">PRODUK BARU</span>
+                            </label>
+                            <label class="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 hover:text-slate-900">
+                              <input type="checkbox" value="is_price_changed" v-model="filters.flags" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
+                              <span class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200">HARGA BEDA</span>
                             </label>
                           </div>
                         </div>
@@ -4101,7 +4246,10 @@ onUnmounted(() => {
                           </div>
                         </td>
                         <td class="px-4 py-3 text-slate-700">
-                          {{ pkg.package_name || '-' }}
+                          <div class="flex items-center gap-2">
+                            <span>{{ pkg.package_name || '-' }}</span>
+                            <span v-if="pkg.is_new_product" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-green-100 text-green-700 border border-green-200 whitespace-nowrap" title="Tidak ada di baseline (List produk.csv)">PRODUK BARU</span>
+                          </div>
                         </td>
                         <td
                           class="px-4 py-3 text-right font-bold text-blue-600"
@@ -4116,14 +4264,10 @@ onUnmounted(() => {
                         <td
                           class="px-4 py-3 text-right text-slate-800 font-medium"
                         >
-                          Rp
-                          {{
-                            Number(
-                              pkg.price,
-                            ).toLocaleString(
-                              "id-ID",
-                            )
-                          }}
+                          <div class="flex items-center justify-end gap-2">
+                            <span v-if="pkg.is_price_changed" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200 whitespace-nowrap" :title="'Harga baseline: Rp ' + Number(pkg.baseline_price).toLocaleString('id-ID')">HARGA BEDA</span>
+                            <span>Rp {{ Number(pkg.price).toLocaleString("id-ID") }}</span>
+                          </div>
                         </td>
                         <td
                           class="px-4 py-3 text-slate-600"
@@ -4924,6 +5068,91 @@ onUnmounted(() => {
             ></path>
           </svg>
         </button>
+      </div>
+    </div>
+
+    <!-- Active Session Upload Modal -->
+    <div v-if="showActiveUploadModal" class="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+      <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-md overflow-hidden animate-fade-in-up">
+        <div class="p-6 border-b border-slate-100 dark:border-slate-700 flex justify-between items-center">
+          <h3 class="font-bold text-slate-800 dark:text-slate-100 text-lg">
+            {{ activeUploadMode === 'image' ? 'Upload Gambar Pricelist' : 'Upload Data Excel/CSV' }}
+          </h3>
+          <button @click="showActiveUploadModal = false; form.images = [];" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-300">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+          </button>
+        </div>
+        
+        <div class="p-6 flex flex-col items-center">
+          <!-- Image Mode UI -->
+          <template v-if="activeUploadMode === 'image'">
+            <div class="w-16 h-16 bg-theme-brand-primary/10 rounded-full flex items-center justify-center mb-4">
+              <svg class="anime-svg-draw w-8 h-8 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+            </div>
+            <h3 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">{{ form.images.length }} File Terpilih</h3>
+            
+            <!-- Progress Bar for Images -->
+            <div class="w-full mt-2 mb-4">
+              <div class="flex justify-between text-sm text-slate-500 dark:text-slate-400 mb-2">
+                <span>Ukuran: {{ formatBytes(totalFileSize) }}</span>
+                <span>Batas: 100 MB</span>
+              </div>
+              <div class="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 overflow-hidden">
+                <div 
+                  class="h-full rounded-full transition-all duration-500"
+                  :class="fileSizePercentage >= 100 ? 'bg-theme-semantic-danger' : 'bg-theme-brand-primary'"
+                  :style="{ width: fileSizePercentage + '%' }"
+                ></div>
+              </div>
+              <p v-if="fileSizePercentage >= 100" class="text-red-500 text-sm mt-2 text-center font-medium">Ukuran melebihi batas maksimal!</p>
+            </div>
+          </template>
+
+          <!-- Excel Mode UI -->
+          <template v-else>
+            <div class="w-16 h-16 bg-theme-brand-primary/10 rounded-full flex items-center justify-center mb-4">
+              <svg class="anime-svg-draw w-8 h-8 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+            </div>
+            <h3 class="text-lg font-bold text-slate-800 dark:text-slate-100 mb-4 text-center break-words max-w-full">
+              {{ form.images[0]?.name }}
+            </h3>
+          </template>
+          
+          <!-- Timestamp Override -->
+          <div class="w-full flex flex-col mb-2">
+            <label class="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">Atur Waktu (Opsional)</label>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mb-2">Jika kosong, akan menggunakan waktu file/saat ini.</p>
+            <VueDatePicker
+              v-if="activeUploadMode === 'image'"
+              v-model="form.manual_timestamp"
+              :enable-time-picker="true"
+              placeholder="Pilih Tanggal & Waktu"
+            />
+            <input 
+              v-else 
+              type="date" 
+              v-model="form.manual_timestamp" 
+              class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-800 dark:text-slate-100 px-3 py-2 focus:ring-primary focus:border-primary"
+            />
+          </div>
+        </div>
+
+        <div class="p-6 bg-slate-50 dark:bg-slate-750 border-t border-slate-100 dark:border-slate-700 flex gap-3 justify-end">
+          <button 
+            @click="showActiveUploadModal = false; form.images = [];" 
+            class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors font-medium"
+          >
+            Batal
+          </button>
+          <button 
+            @click="processActiveUpload" 
+            :disabled="(activeUploadMode === 'image' && fileSizePercentage >= 100) || form.processing"
+            class="px-6 py-2 rounded-lg bg-theme-brand-primary hover:bg-theme-brand-primary/90 text-white shadow-sm transition-all font-semibold flex items-center gap-2 disabled:opacity-50"
+          >
+            <svg v-if="form.processing" class="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+            Upload
+          </button>
+        </div>
       </div>
     </div>
 
