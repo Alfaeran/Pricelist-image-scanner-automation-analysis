@@ -18,13 +18,29 @@ return [
     'app_name' => env('APP_NAME', 'Pricelist Scanner'),
 
     // Application version
-    'version' => env('NATIVEPHP_VERSION', '1.0.0'),
+    'version' => env('NATIVEPHP_APP_VERSION', env('NATIVEPHP_VERSION', '1.0.0')),
 
     // Author information
-    'author' => env('NATIVEPHP_AUTHOR', 'Pricelist Scanner Team'),
+    'author' => env('NATIVEPHP_APP_AUTHOR', env('NATIVEPHP_AUTHOR', 'Pricelist Scanner Team')),
+
+    'copyright' => env('NATIVEPHP_APP_COPYRIGHT'),
+
+    'website' => env('NATIVEPHP_APP_WEBSITE'),
 
     // Application description
     'description' => 'Sistem otomasi ekstraksi dan analisis pricelist menggunakan AI',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Service Provider
+    |--------------------------------------------------------------------------
+    |
+    | NativePHP boots this provider inside the packaged app. Without it the
+    | app starts with no window and no managed subprocesses.
+    |
+    */
+
+    'provider' => \App\Providers\NativeAppServiceProvider::class,
 
     /*
     |--------------------------------------------------------------------------
@@ -95,4 +111,78 @@ return [
     'python_path' => env('NATIVEPHP_PYTHON_PATH', 'python'),
 
     'fastapi_port' => (int) env('NATIVEPHP_FASTAPI_PORT', 8091),
+
+    /*
+    | Where the Python pipeline lives, relative to the Laravel app.
+    |
+    | In the repo it sits next to scanner-app as ../src. The packaged app only
+    | ships the Laravel directory, so `app:bundle-python` copies it to
+    | resources/python during prebuild and ProcessManager prefers that copy.
+    */
+    'python_source' => [
+        base_path('resources/python'),
+        base_path('../src'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Packaging
+    |--------------------------------------------------------------------------
+    */
+
+    // Secrets that must never end up inside a shipped installer.
+    'cleanup_env_keys' => [
+        'AWS_*',
+        'AZURE_*',
+        'GITHUB_*',
+        'DO_SPACES_*',
+        '*_SECRET',
+        'BIFROST_*',
+        'NATIVEPHP_UPDATER_PATH',
+        'NATIVEPHP_APPLE_ID',
+        'NATIVEPHP_APPLE_ID_PASS',
+        'NATIVEPHP_APPLE_TEAM_ID',
+        'NATIVEPHP_AZURE_PUBLISHER_NAME',
+        'NATIVEPHP_AZURE_ENDPOINT',
+        'NATIVEPHP_AZURE_CERTIFICATE_PROFILE_NAME',
+        'NATIVEPHP_AZURE_CODE_SIGNING_ACCOUNT_NAME',
+    ],
+
+    // Removed from the bundle before packaging.
+    'cleanup_exclude_files' => [
+        'build',
+        'temp',
+        'content',
+        'node_modules',
+        '*/tests',
+    ],
+
+    // Ship the Python pipeline and a freshly built frontend with the app.
+    'prebuild' => [
+        'npm run build',
+        'php artisan app:bundle-python',
+    ],
+
+    'postbuild' => [
+        //
+    ],
+
+    'nsis' => [
+        'delete_app_data_on_uninstall' => env('NATIVEPHP_NSIS_DELETE_APP_DATA', false),
+    ],
+
+    'binary_path' => env('NATIVEPHP_PHP_BINARY_PATH', null),
+
+    /*
+    | Queue workers NativePHP starts for us. ProcessManager deliberately does
+    | not also start one - two workers on the same table would race for jobs.
+    */
+    'queue_workers' => [
+        'default' => [
+            'queues' => ['default'],
+            'memory_limit' => 128,
+            'timeout' => 120,
+            'sleep' => 3,
+        ],
+    ],
 ];

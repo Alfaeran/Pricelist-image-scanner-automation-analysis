@@ -13,8 +13,11 @@ use Illuminate\Support\Facades\Http;
  */
 class SystemController extends Controller
 {
-    /** Processes the UI is allowed to restart. */
-    private const RESTARTABLE = ['fastapi', 'queue_worker'];
+    /**
+     * Processes the UI is allowed to restart. Queue workers are NativePHP's
+     * to manage, so they are deliberately not in this list.
+     */
+    private const RESTARTABLE = ['fastapi'];
 
     public function health(): JsonResponse
     {
@@ -81,22 +84,23 @@ class SystemController extends Controller
         }
     }
 
+    /**
+     * NativePHP owns the queue workers, so there is no process of ours to
+     * inspect. The pending backlog is the honest signal we do have.
+     */
     private function queueStatus(): array
     {
-        $managed = app(ProcessManager::class)->health()['queue_worker'] ?? null;
-
         try {
             $pending = DB::table('jobs')->count();
         } catch (\Throwable $e) {
-            $pending = null;
+            return ['pending' => null, 'detail' => 'Queue table unavailable.'];
         }
 
         return [
-            'running' => $managed['running'] ?? null,
             'pending' => $pending,
-            'detail' => $managed === null
-                ? 'Queue worker is not managed by this instance.'
-                : (($managed['running'] ?? false) ? 'Worker running.' : 'Worker stopped.'),
+            'detail' => $pending === 0
+                ? 'No jobs waiting.'
+                : "{$pending} job(s) waiting.",
         ];
     }
 }

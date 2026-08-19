@@ -29,8 +29,10 @@ class ProcessManager
             return;
         }
 
+        // Only FastAPI. Queue workers are started by NativePHP itself from the
+        // 'queue_workers' config; starting a second one here would put two
+        // workers on the same jobs table.
         $this->startFastApi();
-        $this->startQueueWorker();
         $this->started = true;
 
         // Register shutdown handler to clean up processes
@@ -94,7 +96,6 @@ class ProcessManager
 
         return match ($name) {
             'fastapi' => $this->startFastApi(),
-            'queue_worker' => $this->startQueueWorker(),
             default => false,
         };
     }
@@ -106,11 +107,11 @@ class ProcessManager
     {
         $pythonPath = config('nativephp.python_path', 'python');
         $port = config('nativephp.fastapi_port', 8091);
-        $srcDir = base_path('../src');
+        $srcDir = $this->resolvePythonSource();
 
-        // Verify the src directory exists
-        if (!is_dir($srcDir)) {
-            Log::error("[ProcessManager] FastAPI src directory not found: {$srcDir}");
+        if ($srcDir === null) {
+            Log::error('[ProcessManager] Could not find fastapi_app.py in any of: '
+                . implode(', ', (array) config('nativephp.python_source', [])));
             return false;
         }
 
@@ -146,35 +147,20 @@ class ProcessManager
     }
 
     /**
-     * Start the Laravel Queue Worker subprocess.
+     * Locate the Python pipeline.
+     *
+     * The packaged app only ships the Laravel directory, so the sources are
+     * copied into resources/python at build time; in the repo they still live
+     * next to it as ../src. Try each candidate in order.
      */
-    protected function startQueueWorker(): bool
+    protected function resolvePythonSource(): ?string
     {
-        $phpPath = PHP_BINARY;
-        $artisan = base_path('artisan');
-
-        $command = [
-            $phpPath, $artisan,
-            'queue:work',
-            '--tries=3',
-            '--timeout=120',
-            '--sleep=3',
-        ];
-
-        $process = new Process($command);
-        $process->setWorkingDirectory(base_path());
-        $process->setTimeout(null);
-        $process->start(function ($type, $buffer) {
-            if ($type === Process::ERR) {
-                Log::warning("[QueueWorker] {$buffer}");
-            } else {
-                Log::info("[QueueWorker] {$buffer}");
+        foreach ((array) config('nativephp.python_source', [base_path('../src')]) as $candidate) {
+            if (is_file(rtrim($candidate, '/\\') . DIRECTORY_SEPARATOR . 'fastapi_app.py')) {
+                return $candidate;
             }
-        });
+        }
 
-        $this->processes['queue_worker'] = $process;
-        Log::info("[ProcessManager] Queue worker started (PID: {$process->getPid()})");
-
-        return true;
+        return null;
     }
 }

@@ -20,7 +20,7 @@ class SystemHealthTest extends TestCase
             ->assertJsonStructure([
                 'version',
                 'fastapi' => ['running', 'port', 'detail'],
-                'queue' => ['running', 'pending', 'detail'],
+                'queue' => ['pending', 'detail'],
             ]);
     }
 
@@ -45,6 +45,13 @@ class SystemHealthTest extends TestCase
     public function test_restart_rejects_an_unknown_process(): void
     {
         $this->postJson('/api/system/restart', ['process' => 'rm-rf'])
+            ->assertStatus(422)
+            ->assertJsonPath('ok', false);
+    }
+
+    public function test_restart_refuses_queue_workers_because_nativephp_owns_them(): void
+    {
+        $this->postJson('/api/system/restart', ['process' => 'queue_worker'])
             ->assertStatus(422)
             ->assertJsonPath('ok', false);
     }
