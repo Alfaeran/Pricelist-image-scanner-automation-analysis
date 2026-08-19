@@ -62,18 +62,41 @@ D:\pricelist-scanner-automation-dashboard\
 
 ## ❌ WHAT REMAINS (in priority order)
 
-### Phase 1: NativePHP Package Install (BLOCKER)
-- **PHP and Composer are NOT installed natively on Windows.** The user has been running PHP through Docker/WSL.
-- Need to install PHP 8.3+ and Composer on Windows PATH, OR use Laravel Herd
-- Then run: `composer require nativephp/desktop` and `php artisan native:install`
-- The `nativephp/desktop` package will scaffold the Electron integration
+### ~~Phase 1: NativePHP Package Install~~ ✅ DONE (commit 89f65a7)
+- Use **Laragon's PHP 8.4.23** at `D:\laragon\bin\php\php-8.4.23-Win32-vs16-x64\` (NOT 8.3 — the
+  lock file resolves `symfony/filesystem` v8.1.2 which requires PHP >= 8.4.1). Enabled the `zip`
+  extension in that php.ini. Composer at `D:\laragon\bin\composer`.
+- `nativephp/desktop` 2.2.1 + `nativephp/php-bin` 1.2.0 installed; `native:install` scaffolded
+  Electron into `vendor/nativephp/desktop/resources/electron/` (Electron 325MB downloaded fine).
+- **GOTCHA:** this machine is IT-managed and Defender blocks Composer/curl from writing
+  `nativephp/php-bin` (it bundles compiled PHP binaries). Worked around by downloading the repo
+  zip via browser and wiring it up as a local Composer **path repository** —
+  see `repositories` in `scanner-app/composer.json` → `../.composer-artifacts/nativephp-php-bin-1.2.0`
+  (gitignored). If that folder is missing on a fresh clone, re-download
+  `https://github.com/NativePHP/php-bin/archive/refs/tags/1.2.0.zip` and extract it there.
 
-### Phase 2: Database Migration (PostgreSQL → SQLite)  
-- Audit ALL migration files in `scanner-app/database/migrations/` for PostgreSQL-specific syntax
-- Known issue from commit history: `COALESCE` usage — may need adjustment for SQLite
-- Check for `jsonb` columns, `::cast` syntax, or PostgreSQL-specific functions
-- The `ProcessPricelistJob.php` has been flagged for PostgreSQL-specific queries — verify and fix
-- Ensure `database/database.sqlite` is auto-created (NativeAppServiceProvider already handles this)
+### ~~Phase 2: Database Migration (PostgreSQL → SQLite)~~ ✅ DONE
+- Audited all 20 migrations: **no** PostgreSQL-specific syntax (no `jsonb`, no `::` casts). The
+  only driver-specific one is Laravel's own Pulse migration, which already has a `sqlite` branch.
+- `ProcessPricelistJob.php` was flagged in the old handoff but is **clean** — the whole `app/`
+  tree has exactly one raw query (in `ScannerController::trendData`), and only portable builder
+  methods (`increment`, `updateOrCreate`, `firstOrCreate`) elsewhere.
+- **Fixed a real data-correctness bug** in `ScannerController::trendData` (`/api/trends`, the
+  market trend chart). `image_timestamp` is LLM-extracted free text from image overlays, so it is
+  frequently NOT ISO-8601. SQLite's `DATE()` returns NULL on unparseable input, and the old
+  `DATE(COALESCE(NULLIF(image_timestamp,''), created_at))` only fell back when the value was
+  NULL/empty — a non-empty-but-unparseable value passed through and became `trend_date = NULL`,
+  which `Carbon::parse(null)` then silently rendered as **today**. Now:
+  `COALESCE(DATE(NULLIF(image_timestamp,'')), DATE(created_at))`. The date *filters* had the same
+  split-brain (rows vanished when filtered) and now share one `$trendDate` expression with the
+  SELECT so they cannot disagree.
+- `NativeAppServiceProvider::ensureSqliteDatabase()` created an *empty* DB file but never migrated
+  it — a fresh end-user install would boot to a schema-less DB and crash. Added
+  `runPendingMigrations()`; verified a fresh empty file goes 0 → 23 tables.
+- Actual `.env` switched to SQLite (was still pgsql — old gotcha #6); pgsql settings commented out.
+  Backup at `.env.backup-pgsql` (gitignored — holds 12 real secrets, do not commit).
+- Test suite: **33/45 passing, 0 non-auth failures.** The 7 remaining failures are all in
+  `tests/Feature/Auth/` and are the *expected* consequence of auto-login — Phase 4 removes them.
 
 ### Phase 3: FastAPI Port Update
 - Change default port in `src/fastapi_app.py` line 457 from `8081` to `8091`

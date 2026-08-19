@@ -2,11 +2,15 @@
 
 namespace Tests\Feature;
 
-// use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
 class ExampleTest extends TestCase
 {
+    // AutoAuthenticateDesktop resolves a local user on every request, so even
+    // the landing page needs the schema present.
+    use RefreshDatabase;
+
     /**
      * A basic test example.
      */

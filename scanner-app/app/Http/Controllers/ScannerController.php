@@ -782,6 +782,12 @@ class ScannerController extends Controller
         $startDate = $request->input('start_date');
         $endDate = $request->input('end_date');
 
+        // Effective date of a package: its image_timestamp when that parses as a date,
+        // otherwise the pricelist's created_at. image_timestamp is free text extracted
+        // from image overlays, so it is regularly unparseable. Filtering and grouping
+        // share this expression so the two can never disagree about a package's date.
+        $trendDate = "COALESCE(DATE(NULLIF(extracted_packages.image_timestamp, '')), DATE(pricelists.created_at))";
+
         $query = \App\Models\ExtractedPackage::query()
             ->join('pricelists', 'extracted_packages.pricelist_id', '=', 'pricelists.id')
             ->where('pricelists.status', 'processed')
@@ -795,26 +801,14 @@ class ScannerController extends Controller
         }
 
         if ($startDate) {
-            $query->where(function ($q) use ($startDate) {
-                $q->whereDate('extracted_packages.image_timestamp', '>=', $startDate)
-                  ->orWhere(function ($q2) use ($startDate) {
-                      $q2->whereNull('extracted_packages.image_timestamp')
-                         ->whereDate('pricelists.created_at', '>=', $startDate);
-                  });
-            });
+            $query->whereRaw("{$trendDate} >= ?", [$startDate]);
         }
         if ($endDate) {
-            $query->where(function ($q) use ($endDate) {
-                $q->whereDate('extracted_packages.image_timestamp', '<=', $endDate)
-                  ->orWhere(function ($q2) use ($endDate) {
-                      $q2->whereNull('extracted_packages.image_timestamp')
-                         ->whereDate('pricelists.created_at', '<=', $endDate);
-                  });
-            });
+            $query->whereRaw("{$trendDate} <= ?", [$endDate]);
         }
 
         $data = $query->selectRaw("
-            DATE(COALESCE(NULLIF(extracted_packages.image_timestamp, ''), CAST(pricelists.created_at AS TEXT))) as trend_date,
+            {$trendDate} as trend_date,
             extracted_packages.provider,
             ROUND(AVG(extracted_packages.price), 0) as avg_price,
             ROUND(AVG(extracted_packages.yield_val), 0) as avg_yield,

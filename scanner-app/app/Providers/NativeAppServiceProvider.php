@@ -2,7 +2,10 @@
 
 namespace App\Providers;
 
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
 
 class NativeAppServiceProvider extends ServiceProvider
@@ -50,13 +53,48 @@ class NativeAppServiceProvider extends ServiceProvider
     {
         $dbPath = config('database.connections.sqlite.database');
 
-        if ($dbPath && !file_exists($dbPath)) {
+        if (!$dbPath) {
+            return;
+        }
+
+        if (!file_exists($dbPath)) {
             $dir = dirname($dbPath);
             if (!is_dir($dir)) {
                 mkdir($dir, 0755, true);
             }
             touch($dbPath);
             Log::info("[NativeApp] Created SQLite database at: {$dbPath}");
+        }
+
+        $this->runPendingMigrations();
+    }
+
+    /**
+     * Bring the SQLite schema up to date.
+     *
+     * A freshly created database file has no tables at all, and an existing one
+     * can be a schema behind after the user installs an app update. Both leave
+     * the app querying tables that do not exist, so migrate before serving.
+     */
+    protected function runPendingMigrations(): void
+    {
+        try {
+            if (!Schema::hasTable('migrations')) {
+                $pending = true;
+            } else {
+                // Migrations are only ever added, so more files than recorded
+                // rows means there is something left to run.
+                $applied = DB::table('migrations')->count();
+                $onDisk = count(glob(database_path('migrations') . DIRECTORY_SEPARATOR . '*.php'));
+                $pending = $onDisk > $applied;
+            }
+
+            if ($pending) {
+                Artisan::call('migrate', ['--force' => true]);
+                Log::info('[NativeApp] Applied pending migrations: ' . trim(Artisan::output()));
+            }
+        } catch (\Throwable $e) {
+            Log::error('[NativeApp] Failed to migrate database: ' . $e->getMessage());
         }
     }
 
