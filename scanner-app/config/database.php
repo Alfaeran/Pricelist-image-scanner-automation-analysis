@@ -38,9 +38,15 @@ return [
             'database' => env('DB_DATABASE', database_path('database.sqlite')),
             'prefix' => '',
             'foreign_key_constraints' => env('DB_FOREIGN_KEYS', true),
-            'busy_timeout' => null,
-            'journal_mode' => null,
-            'synchronous' => null,
+            // The desktop app writes to this one file from several processes at
+            // once: HTTP requests, the queue worker running extractions, and
+            // status callbacks from the Python engine. With the default rollback
+            // journal only one of them can write and the rest die on
+            // "database is locked". WAL lets readers and a writer coexist, and
+            // busy_timeout makes a blocked writer wait instead of failing.
+            'busy_timeout' => env('DB_BUSY_TIMEOUT', 10000),
+            'journal_mode' => env('DB_JOURNAL_MODE', 'WAL'),
+            'synchronous' => env('DB_SYNCHRONOUS', 'NORMAL'),
             'transaction_mode' => 'DEFERRED',
         ],
 
