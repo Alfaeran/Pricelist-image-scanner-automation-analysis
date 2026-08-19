@@ -4,6 +4,7 @@ import { Head, useForm, router } from "@inertiajs/vue3";
 import { ref, onMounted, onUnmounted, nextTick, computed, watch } from "vue";
 import axios from "axios";
 import ChartViewer from "@/Components/ChartViewer.vue";
+import WhatsAppMonitor from "@/Components/WhatsAppMonitor.vue";
 import Swal from "sweetalert2";
 import { Line, Bar, Scatter } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, Tooltip as ChartTooltip, Legend } from 'chart.js'
@@ -12,6 +13,8 @@ import '@vuepic/vue-datepicker/dist/main.css';
 import anime from 'animejs';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, BarElement, Title, ChartTooltip, Legend)
+
+const showWhatsAppMonitor = ref(false);
 
 const isDark = ref(false);
 const toggleDarkMode = () => {
@@ -2601,7 +2604,18 @@ onUnmounted(() => {
                     Input Data Manual
                   </div>
                 </button>
+                <button @click="inputType = 'whatsapp'" :class="inputType === 'whatsapp' ? 'bg-theme-surface text-emerald-600 dark:text-emerald-400 shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
+                  <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12.012 2c-5.506 0-9.989 4.478-9.99 9.984 0 1.762.459 3.48 1.332 5.001l-1.416 5.176 5.297-1.389c1.474.803 3.146 1.226 4.774 1.227h.004c5.505 0 9.988-4.478 9.989-9.984 0-2.668-1.037-5.176-2.922-7.062-1.886-1.886-4.394-2.924-7.068-2.924zm5.7 14.167c-.244.688-1.42 1.314-1.961 1.378-.517.061-1.189.096-3.415-.815-2.845-1.163-4.664-4.043-4.806-4.234-.141-.191-1.149-1.528-1.149-2.914 0-1.386.726-2.068.984-2.35.258-.282.563-.353.751-.353.188 0 .376.002.54.01.176.009.412-.067.645.493.245.588.834 2.033.905 2.179.071.146.118.318.024.506-.094.188-.141.306-.282.471-.141.165-.297.369-.424.496-.141.141-.288.295-.124.577.165.282.732 1.205 1.571 1.954 1.079.963 1.989 1.261 2.271 1.402.282.141.447.118.612-.071.165-.188.705-.823.893-1.105.188-.282.376-.235.635-.141.258.094 1.644.775 1.926.916.282.141.47.211.54.329.07.117.07.681-.175 1.369z"/></svg>
+                    WhatsApp Bot (AI)
+                  </div>
+                </button>
               </div>
+            </div>
+
+            <!-- WhatsApp Bot Monitor View -->
+            <div v-show="inputType === 'whatsapp'" class="w-full mb-12">
+              <WhatsAppMonitor />
             </div>
 
             <!-- Drag & Drop Zone (Input File Image) -->

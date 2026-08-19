@@ -35,4 +35,35 @@ return [
         ],
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | WhatsApp Integration
+    |--------------------------------------------------------------------------
+    |
+    | Configuration for WhatsApp chatbot integration.
+    | Set WHATSAPP_DRIVER to 'meta_cloud' for official API or 'evolution'
+    | for self-hosted Evolution API.
+    |
+    */
+
+    'whatsapp' => [
+        'driver' => env('WHATSAPP_DRIVER', 'evolution'),
+        'enabled' => env('WHATSAPP_ENABLED', false),
+
+        // Meta WhatsApp Cloud API (Official)
+        'meta' => [
+            'token' => env('WHATSAPP_META_TOKEN', ''),
+            'phone_number_id' => env('WHATSAPP_META_PHONE_ID', ''),
+            'verify_token' => env('WHATSAPP_META_VERIFY_TOKEN', ''),
+            'app_secret' => env('WHATSAPP_META_APP_SECRET', ''),
+        ],
+
+        // Evolution API (Self-hosted, Unofficial)
+        'evolution' => [
+            'url' => env('WHATSAPP_EVOLUTION_URL', 'http://localhost:8080'),
+            'api_key' => env('WHATSAPP_EVOLUTION_API_KEY', ''),
+            'instance' => env('WHATSAPP_EVOLUTION_INSTANCE', 'scanner-bot'),
+        ],
+    ],
+
 ];

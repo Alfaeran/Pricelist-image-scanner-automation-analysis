@@ -4,6 +4,7 @@ import uvicorn
 from typing import List
 import json
 import logging
+import time
 
 # Import existing pipeline functions
 from pipeline import preprocess_image, extract_packages_gemini, generate_excel, generate_summary_insights, is_zip_file, extract_from_zip, extract_metadata
@@ -209,7 +210,7 @@ async def chat_with_data(req: ChatRequest):
         data_json = json.dumps(minimal_packages, separators=(',', ':'))
         
         prompt = f"""
-Anda adalah asisten Data Analyst Senior. 
+Anda adalah asisten Data Analyst Senior untuk Pricelist Internet. 
 Tugas Anda adalah membaca data paket internet di bawah ini dan menjawab pertanyaan user dengan CERDAS, ANALITIS, dan AKURAT berdasarkan data tersebut.
 
 Data Paket Internet (JSON):
@@ -221,27 +222,38 @@ Keterangan Kolom Data:
 - price: Harga dalam Rupiah
 - gb: Kuota dalam Gigabyte
 - days: Masa Aktif dalam hari
-- yield: Nilai Yield (Harga dibagi GB, semakin KECIL nilainya berarti paket tersebut semakin MURAH/WORTH IT per GB-nya).
+- yield: Nilai Yield (Harga/GB. Semakin KECIL nilainya, semakin MURAH/WORTH IT per GB-nya).
 - cat: Kategori Paket
 
 Pertanyaan User: {req.message}
 
-PENTING: Jawab SELALU dengan format JSON (dan HANYA JSON) di dalam blok ```json ... ```.
+PENTING: Jawab SELALU dengan format JSON di dalam blok ```json ... ```.
 
 Format JSON yang diizinkan:
 {{
   "action": "chart" | "text",
-  "text": "Jawaban analisis Anda secara detail dan ramah berdasarkan data di atas.",
+  "text": "Jawaban analisis Anda.",
   "group_by": "provider" | "category" | "price" | "gb" | "days", 
   "metric": "count" | "average_price",
   "chart_type": "pie" | "bar" | "line" | "doughnut",
   "title": "Judul Grafik"
 }}
 
-Aturan Emas:
-1. Jika user HANYA BERTANYA (misal: "mana paket yang paling worth it", "ada berapa paket telkomsel", "rekomendasikan paket bulanan termurah"), SET action="text", dan tulis analisis Anda di "text" secara lengkap. JANGAN hasilkan grafik kecuali diminta secara eksplisit.
-2. Jika user SECARA EKSPLISIT meminta grafik/visualisasi (misal: "tolong buatkan grafik perbandingan", "tampilkan pie chart", "gambarkan chart"), barulah set action="chart" dan isi konfigurasi grafik. 
-3. Saat menjawab dengan teks, sebutkan Provider, Harga, GB, dan Masa Aktif paket yang relevan. Bandingkan nilai 'yield' untuk membuktikan mana yang paling "worth it" (yield terkecil adalah yang termurah per GB).
+ATURAN STRUKTUR JAWABAN (WAJIB DIIKUTI DI DALAM FIELD "text"):
+Setiap kali menjawab pertanyaan tentang data, isi field "text" HARUS DIBAGI KETAT MENJADI 3 BAGIAN berikut:
+
+📌 *Statement:*
+(Pernyataan utama / kesimpulan singkat dan langsung yang menjawab pertanyaan user).
+
+📊 *Bukti Berdasarkan Data:*
+(Fakta & angka spesifik dari data. Sebutkan Provider, Nama Paket, Harga (Rp), Kuota (GB), Masa Aktif (Hari), dan Nilai Yield untuk membuktikan statement di atas).
+
+💡 *Insight & Rekomendasi:*
+(Analisis mendalam mengenai temuan data ini, perbandingan antar brand/kategori, serta saran atau poin keputusan bisnis yang bermanfaat).
+
+Aturan Emas Tambahan:
+1. Jika user HANYA BERTANYA, SET action="text", dan tulis 3 bagian struktur di atas pada field "text". JANGAN hasilkan grafik kecuali diminta secara eksplisit.
+2. Jika user SECARA EKSPLISIT meminta grafik/visualisasi, barulah set action="chart" dan isi konfigurasi grafik.
 """
         config = types.GenerateContentConfig(temperature=0.0)
         
@@ -280,64 +292,80 @@ Aturan Emas:
         
         # Extract JSON instruction from LLM
         import re
-        match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text, re.IGNORECASE)
         
         try:
-            if match:
-                intent = json.loads(match.group(1))
-            else:
-                # Fallback if AI didn't use code blocks but returned raw JSON
-                intent = json.loads(text)
-                
-            text = intent.get("text", "")
+            match = re.search(r'```(?:json)?\s*([\s\S]*?)\s*```', text, re.IGNORECASE)
+            raw_str = match.group(1).strip() if match else text.strip()
             
-            if intent.get("action") == "chart":
-                group_col = intent.get("group_by")
-                metric = intent.get("metric", "count")
-                chart_type = intent.get("chart_type", "bar")
-                title = intent.get("title", "Visualisasi Data")
-                
-                if group_col in df.columns:
-                    # Calculate locally via Pandas
-                    if metric == "count":
-                        series = df[group_col].value_counts()
-                        label_name = "Jumlah Paket"
-                    elif metric == "average_price":
-                        series = df.groupby(group_col)['price'].mean().round()
-                        label_name = "Rata-rata Harga (Rp)"
-                    else:
-                        series = df[group_col].value_counts()
-                        label_name = "Jumlah"
-                        
-                    data_dict = series.to_dict()
-                    labels = [str(k) for k in data_dict.keys()]
-                    values = list(data_dict.values())
+            intent = json.loads(raw_str)
+            if isinstance(intent, dict):
+                text = intent.get("text", text)
+                if intent.get("action") == "chart":
+                    group_col = intent.get("group_by")
+                    metric = intent.get("metric", "count")
+                    chart_type = intent.get("chart_type", "bar")
+                    title = intent.get("title", "Visualisasi Data")
                     
-                    # Generate Chart.js JSON structure
-                    chart_config = {
-                        "type": chart_type,
-                        "data": {
-                            "labels": labels,
-                            "datasets": [{
-                                "label": label_name,
-                                "data": values,
-                                "borderWidth": 1
-                            }]
-                        },
-                        "options": {
-                            "responsive": True,
-                            "plugins": {
-                                "title": {
-                                    "display": True,
-                                    "text": title
+                    if group_col in df.columns:
+                        # Calculate locally via Pandas
+                        if metric == "count":
+                            series = df[group_col].value_counts()
+                            label_name = "Jumlah Paket"
+                        elif metric == "average_price":
+                            series = df.groupby(group_col)['price'].mean().round()
+                            label_name = "Rata-rata Harga (Rp)"
+                        else:
+                            series = df[group_col].value_counts()
+                            label_name = "Jumlah"
+                            
+                        data_dict = series.to_dict()
+                        labels = [str(k) for k in data_dict.keys()]
+                        values = list(data_dict.values())
+                        
+                        # Generate Chart.js JSON structure
+                        chart_config = {
+                            "type": chart_type,
+                            "data": {
+                                "labels": labels,
+                                "datasets": [{
+                                    "label": label_name,
+                                    "data": values,
+                                    "borderWidth": 1
+                                }]
+                            },
+                            "options": {
+                                "responsive": True,
+                                "plugins": {
+                                    "title": {
+                                        "display": True,
+                                        "text": title
+                                    }
                                 }
                             }
                         }
-                    }
         except Exception as e:
-            logging.error(f"Intent parsing failed: {e}. Raw text: {response.text}")
-            # Fallback to display the raw text if parsing completely fails
-            text = response.text
+            logging.warning(f"Intent parsing exception: {e}")
+
+        # Fail-safe unwrap loop: guarantee text is never a JSON string or JSON codeblock
+        for _ in range(3):
+            if isinstance(text, str):
+                s = text.strip()
+                if s.startswith('{') or '```' in s:
+                    clean_s = re.sub(r'```(?:json)?\s*([\s\S]*?)\s*```', r'\1', s, flags=re.IGNORECASE).strip()
+                    try:
+                        p = json.loads(clean_s)
+                        if isinstance(p, dict) and "text" in p:
+                            text = p["text"]
+                        elif isinstance(p, str):
+                            text = p
+                        else:
+                            break
+                    except Exception:
+                        break
+                else:
+                    break
+            else:
+                break
         return JSONResponse(content={
             "status": "success", 
             "data": {

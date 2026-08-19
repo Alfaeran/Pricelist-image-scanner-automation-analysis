@@ -157,21 +157,19 @@ class ProcessPricelistJob implements ShouldQueue
                                 $pricelist->packages()->delete();
                             }
                             foreach ($data as $pkg) {
-                                if (!isset($pkg['price'], $pkg['gb'], $pkg['days']))
-                                    continue;
-
-                                $price = (int) $pkg['price'];
-                                $gb = (float) $pkg['gb'];
-                                $days = (int) $pkg['days'];
+                                $price = (int) round((float) ($pkg['price'] ?? 0));
+                                $gb = (float) ($pkg['gb'] ?? 0);
+                                $days = (int) round((float) ($pkg['days'] ?? 0));
 
                                 // Skip packages with zero/negative values (OCR errors)
                                 $isRejected = ($price <= 0 || $gb <= 0 || $days <= 0);
-                                $yield_val = 0;
+                                $rawYield = 0;
                                 if (isset($pkg['yield_val'])) {
-                                    $yield_val = $pkg['yield_val'];
+                                    $rawYield = $pkg['yield_val'];
                                 } else {
-                                    $yield_val = app(\App\Http\Controllers\ScannerController::class)->calculateYield($pkg['package_name'] ?? '', $gb, $days, $price);
+                                    $rawYield = app(\App\Http\Controllers\ScannerController::class)->calculateYield($pkg['package_name'] ?? '', $gb, $days, $price);
                                 }
+                                $yield_val = (int) round((float) $rawYield);
                                 
                                 $isAnomaly = ($price <= 0 || $gb <= 0 || $yield_val > 50000);
 
