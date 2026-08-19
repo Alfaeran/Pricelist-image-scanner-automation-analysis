@@ -101,12 +101,13 @@ class ProcessPricelistJob implements ShouldQueue
                 $hasValidImage = false;
                 $hasValidData = false;
 
-                foreach ($this->filePaths as $path) {
+                foreach ($this->filePaths as $idx => $path) {
                     $fullPath = Storage::disk('public')->path($path);
                     if (file_exists($fullPath)) {
                         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
                         if (in_array($ext, ['csv', 'txt', 'xlsx', 'xls'])) {
-                            $this->processDataFile($fullPath, $pricelist);
+                            $loc = $this->locations[$idx] ?? null;
+                            $this->processDataFile($fullPath, $pricelist, $loc);
                             $hasValidData = true;
                         } else {
                             $stream = fopen($fullPath, 'r');
@@ -392,7 +393,7 @@ class ProcessPricelistJob implements ShouldQueue
         return 'Bulanan (Standar)';
     }
 
-    private function processDataFile(string $fullPath, Pricelist $pricelist): void
+    private function processDataFile(string $fullPath, Pricelist $pricelist, ?string $location = null): void
     {
         $baselineData = $this->getBaselineData();
         $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
@@ -459,6 +460,7 @@ class ProcessPricelistJob implements ShouldQueue
                 'category' => $this->categorize($days, $price),
                 'product_type' => 'Data',
                 'image_timestamp' => $this->manualTimestamp,
+                'image_location' => $location,
             ]);
         }
     }
