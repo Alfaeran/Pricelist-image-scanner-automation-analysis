@@ -180,6 +180,19 @@ D:\pricelist-scanner-automation-dashboard\
 - Add app version display in the layout from `config('nativephp.version')`
 - Need an API endpoint for health check: `GET /api/system/health` → returns FastAPI + queue status
 
+### ⚠️ OPEN ISSUE: the bundled venv is not self-contained
+`scanner-app/venv` **is** bundled into the installer and `ProcessManager` correctly runs it
+(verified live: `venv/Scripts/python.exe -m uvicorn fastapi_app:app --port 8091`). But it is a
+normal `python -m venv`, so it is only a shim:
+```
+home = D:\laragon\bin\python\python-3.13     # pyvenv.cfg
+```
+No `DLLs/`, no `Lib/os.py`, no `python313.zip` — the stdlib lives in **Laragon's** Python. It
+works on this machine only because Laragon is installed. **On a clean end-user machine the AI
+engine will not start.** So Phase 7's "zero-dependency install" goal is *not* met yet.
+Fix: bundle an *embeddable* Python (`python-3.13.x-embed-amd64`) plus site-packages and point
+`nativephp.python_venv` at it — then re-test on a machine without Python.
+
 ### Phase 7: Build & Distribution
 - Run `php artisan native:build` to produce a Windows `.exe` installer
 - This bundles PHP runtime + the Laravel app + Electron into a standalone installer

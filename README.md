@@ -18,9 +18,14 @@ Database memakai **SQLite** (dibuat & dimigrasi otomatis saat pertama kali dijal
 dan FastAPI dijalankan sendiri oleh aplikasi sebagai proses anak pada port **8091**.
 
 ### Persyaratan
-- **Tidak ada.** Installer sudah membawa PHP, Electron, **dan** Python beserta seluruh
-  dependensi pipeline (`scanner-app/venv`), jadi pengguna akhir tidak perlu memasang apa pun.
-  Kalau ingin memakai Python milik sendiri, set `NATIVEPHP_PYTHON_PATH` — nilai itu selalu menang.
+- PHP dan Electron sudah ikut di dalam installer.
+- **Python 3.13 masih harus terpasang di mesin pengguna.** Installer memang membawa
+  `scanner-app/venv` (berisi seluruh dependensi pipeline), **tetapi venv itu belum mandiri**:
+  `pyvenv.cfg`-nya menunjuk ke interpreter dasar (`home = D:\laragon\bin\python\python-3.13`)
+  dan tidak memuat `DLLs/` maupun standard library. Di mesin tanpa Python di lokasi tersebut,
+  mesin AI tidak akan jalan. Set `NATIVEPHP_PYTHON_PATH` untuk menunjuk interpreter lain.
+- ⚠️ **Belum benar-benar zero-dependency.** Untuk mencapainya, bundel Python *embeddable*
+  (python-x.y.z-embed-amd64) beserta site-packages-nya, lalu arahkan `python_venv` ke sana.
 - Untuk *membangun* installer: PHP 8.4+, Composer, dan Node.js 22+.
   Di mesin ini gunakan PHP bawaan Laragon: `D:\laragon\bin\php\php-8.4.23-Win32-vs16-x64`.
   Pastikan `scanner-app/venv` ada dan berisi dependensi dari `requirements.txt`, karena
