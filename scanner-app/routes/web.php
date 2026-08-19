@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\ApiKeyController;
+use App\Http\Controllers\BaselineProductController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\ScannerController;
 use App\Http\Controllers\SystemController;
@@ -52,6 +53,13 @@ Route::get('/api/learned-patterns', function () {
 // Desktop background services: engine status + restart
 Route::get('/api/system/health', [SystemController::class, 'health'])->name('system.health');
 Route::post('/api/system/restart', [SystemController::class, 'restart'])->name('system.restart');
+
+// Baseline Products API
+Route::get('/api/baseline-products', [BaselineProductController::class, 'index'])->name('baseline.index');
+Route::post('/api/baseline-products', [BaselineProductController::class, 'store'])->name('baseline.store');
+Route::put('/api/baseline-products/{baselineProduct}', [BaselineProductController::class, 'update'])->name('baseline.update');
+Route::delete('/api/baseline-products/{baselineProduct}', [BaselineProductController::class, 'destroy'])->name('baseline.destroy');
+Route::post('/api/baseline-products/bulk', [BaselineProductController::class, 'bulkUpdate'])->name('baseline.bulkUpdate');
 
 // API Key management
 Route::get('/api/keys', [ApiKeyController::class, 'index'])->name('apikeys.index');

@@ -24,7 +24,8 @@ class ProcessPricelistJob implements ShouldQueue
         public int $pricelistId,
         public array $filePaths,
         public bool $isAppend = false,
-        public ?string $manualTimestamp = null
+        public ?string $manualTimestamp = null,
+        public ?array $locations = null
     ) {
     }
 
@@ -100,12 +101,13 @@ class ProcessPricelistJob implements ShouldQueue
                 $hasValidImage = false;
                 $hasValidData = false;
 
-                foreach ($this->filePaths as $path) {
+                foreach ($this->filePaths as $idx => $path) {
                     $fullPath = Storage::disk('public')->path($path);
                     if (file_exists($fullPath)) {
                         $ext = strtolower(pathinfo($path, PATHINFO_EXTENSION));
                         if (in_array($ext, ['csv', 'txt', 'xlsx', 'xls'])) {
-                            $this->processDataFile($fullPath, $pricelist);
+                            $loc = $this->locations[$idx] ?? null;
+                            $this->processDataFile($fullPath, $pricelist, $loc);
                             $hasValidData = true;
                         } else {
                             $stream = fopen($fullPath, 'r');
@@ -153,7 +155,16 @@ class ProcessPricelistJob implements ShouldQueue
                             return;
 
                         $baselineData = $this->getBaselineData();
-                        DB::transaction(function () use ($data, $pricelist, $baselineData) {
+                        
+                        $filenameToLocation = [];
+                        if ($this->locations && is_array($this->locations)) {
+                            foreach ($this->filePaths as $idx => $path) {
+                                $filename = basename($path);
+                                $filenameToLocation[$filename] = $this->locations[$idx] ?? null;
+                            }
+                        }
+
+                        DB::transaction(function () use ($data, $pricelist, $baselineData, $filenameToLocation) {
                             if (!$this->isAppend) {
                                 $pricelist->packages()->delete();
                             }
@@ -180,19 +191,37 @@ class ProcessPricelistJob implements ShouldQueue
                                 elseif ($providerStr == '3ID') $providerStr = '3';
                                 elseif ($providerStr == 'BYU') $providerStr = 'BY.U';
 
-                                $baselineKey = $providerStr . '_' . $gb . '_' . $days;
+                                $fallbackKey = $providerStr . '_' . $gb;
                                 $isNewProduct = false;
                                 $isPriceChanged = false;
+                                $isDaysChanged = false;
                                 $baselinePrice = null;
+                                $baselineDays = null;
 
-                                if (isset($baselineData[$baselineKey])) {
-                                    $baselinePrice = $baselineData[$baselineKey]['price'];
-                                    if ($price !== $baselinePrice) {
-                                        $isPriceChanged = true;
+                                if (in_array($providerStr, $baselineData['providers'])) {
+                                    if (isset($baselineData['exact'][$baselineKey])) {
+                                        $baselinePrice = $baselineData['exact'][$baselineKey]['price'];
+                                        if ($price !== $baselinePrice) {
+                                            $isPriceChanged = true;
+                                        }
+                                    } elseif (isset($baselineData['fallback'][$fallbackKey])) {
+                                        $fallbackMatch = $baselineData['fallback'][$fallbackKey][0];
+                                        $isDaysChanged = true;
+                                        $baselinePrice = $fallbackMatch['price'];
+                                        $baselineDays = $fallbackMatch['days'];
+                                        if ($price !== $baselinePrice) {
+                                            $isPriceChanged = true;
+                                        }
+                                    } else {
+                                        $isNewProduct = true;
                                     }
-                                } else {
-                                    $isNewProduct = true;
                                 }
+                                $imageFilename = $pkg['image_filename'] ?? null;
+                                $branch = null;
+                                if ($imageFilename && isset($filenameToLocation[$imageFilename])) {
+                                    $branch = $filenameToLocation[$imageFilename];
+                                }
+                                $locDetails = $this->getLocationDetails($branch);
 
                                 ExtractedPackage::create([
                                     'pricelist_id' => $pricelist->id,
@@ -205,12 +234,17 @@ class ProcessPricelistJob implements ShouldQueue
                                     'is_anomaly' => $isAnomaly,
                                     'is_new_product' => $isNewProduct,
                                     'is_price_changed' => $isPriceChanged,
+                                    'is_days_changed' => $isDaysChanged,
                                     'baseline_price' => $baselinePrice,
+                                    'baseline_days' => $baselineDays,
                                     'category' => $isRejected ? 'REJECTED' : $this->categorize((int) $pkg['days'], (int) $pkg['price']),
                                     'product_type' => $pkg['product_type'] ?? null,
                                     'image_timestamp' => $this->manualTimestamp ?? ($pkg['image_timestamp'] ?? null),
                                     'image_location' => $pkg['image_location'] ?? null,
-                                    'image_filename' => $pkg['image_filename'] ?? null,
+                                    'image_filename' => $imageFilename,
+                                    'circle' => $locDetails['circle'],
+                                    'region' => $locDetails['region'],
+                                    'branch' => $locDetails['branch'],
                                 ]);
                             }
                         });
@@ -359,7 +393,7 @@ class ProcessPricelistJob implements ShouldQueue
         return 'Bulanan (Standar)';
     }
 
-    private function processDataFile(string $fullPath, Pricelist $pricelist): void
+    private function processDataFile(string $fullPath, Pricelist $pricelist, ?string $location = null): void
     {
         $baselineData = $this->getBaselineData();
         $ext = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
@@ -426,6 +460,7 @@ class ProcessPricelistJob implements ShouldQueue
                 'category' => $this->categorize($days, $price),
                 'product_type' => 'Data',
                 'image_timestamp' => $this->manualTimestamp,
+                'image_location' => $location,
             ]);
         }
     }
@@ -448,51 +483,51 @@ class ProcessPricelistJob implements ShouldQueue
 
     private function getBaselineData(): array
     {
-        $baselineData = [];
-        $fullPath = base_path('List produk.csv');
-        if (file_exists($fullPath)) {
-            if (($handle = fopen($fullPath, "r")) !== FALSE) {
-                $isHeader = true;
-                while (($row = fgetcsv($handle, 1000, ",")) !== FALSE) {
-                    if ($isHeader) {
-                        $isHeader = false;
-                        continue;
-                    }
-                    if (count($row) < 11) continue;
-                    
-                    $provider = strtoupper(trim($row[1]));
-                    if (!$provider) continue;
-                    
-                    if ($provider == 'SF') $provider = 'SMARTFREN';
-                    elseif ($provider == 'TSEL') $provider = 'TELKOMSEL';
-                    elseif ($provider == '3ID') $provider = '3';
-                    elseif ($provider == 'BYU') $provider = 'BY.U';
-                    
-                    $priceStr = $row[6];
-                    if (empty(trim($priceStr))) {
-                        $priceStr = $row[4];
-                    }
-                    $price = (int) preg_replace('/[^\d]/', '', $priceStr ?? '');
-                    
-                    $gbStr = str_replace(',', '.', $row[7] ?? '');
-                    $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
-                    
-                    $daysStr = $row[10] ?? '';
-                    if (strtolower(trim($daysStr)) === 'follow sim') {
-                        $days = 0;
-                    } else {
-                        $days = (int) preg_replace('/[^\d]/', '', $daysStr);
-                    }
-                    
-                    $key = $provider . '_' . $gb . '_' . $days;
-                    $baselineData[$key] = [
-                        'price' => $price,
-                        'name' => $row[2]
-                    ];
-                }
-                fclose($handle);
+        $baselineData = ['exact' => [], 'fallback' => [], 'providers' => []];
+        $products = \App\Models\BaselineProduct::all();
+        foreach ($products as $product) {
+            $providerStr = strtoupper(trim($product->provider));
+            if (!in_array($providerStr, $baselineData['providers'])) {
+                $baselineData['providers'][] = $providerStr;
             }
+
+            $key = $providerStr . '_' . (float)$product->quota_s . '_' . $product->days;
+            $baselineData['exact'][$key] = [
+                'price' => $product->price,
+                'name' => $product->package_name
+            ];
+            $fallbackKey = $providerStr . '_' . (float)$product->quota_s;
+            if (!isset($baselineData['fallback'][$fallbackKey])) {
+                $baselineData['fallback'][$fallbackKey] = [];
+            }
+            $baselineData['fallback'][$fallbackKey][] = [
+                'price' => $product->price,
+                'days' => $product->days
+            ];
         }
         return $baselineData;
+    }
+
+    private function getLocationDetails(?string $branch): array
+    {
+        if (!$branch) {
+            return ['circle' => null, 'region' => null, 'branch' => null];
+        }
+
+        $centralJava = ['Semarang', 'Surakarta', 'Magelang', 'Salatiga', 'Tegal', 'Pekalongan', 'Cilacap', 'Banyumas', 'Purbalingga', 'Banjarnegara', 'Kebumen', 'Purworejo', 'Wonosobo', 'Boyolali', 'Klaten', 'Sukoharjo', 'Wonogiri', 'Karanganyar', 'Sragen', 'Grobogan', 'Blora', 'Rembang', 'Pati', 'Kudus', 'Jepara', 'Demak', 'Temanggung', 'Kendal', 'Batang', 'Pemalang', 'Brebes'];
+        $eastJava = ['Surabaya', 'Malang', 'Kediri', 'Madiun', 'Mojokerto', 'Pasuruan', 'Probolinggo', 'Batu', 'Blitar', 'Bangkalan', 'Banyuwangi', 'Bojonegoro', 'Bondowoso', 'Gresik', 'Jember', 'Jombang', 'Lamongan', 'Lumajang', 'Magetan', 'Nganjuk', 'Ngawi', 'Pacitan', 'Pamekasan', 'Ponorogo', 'Sampang', 'Sidoarjo', 'Situbondo', 'Sumenep', 'Trenggalek', 'Tuban', 'Tulungagung'];
+        
+        $region = 'Bali Nusra';
+        if (in_array($branch, $centralJava)) {
+            $region = 'Central Java';
+        } elseif (in_array($branch, $eastJava)) {
+            $region = 'East Java';
+        }
+
+        return [
+            'circle' => 'Java Bali Nusra',
+            'region' => $region,
+            'branch' => $branch
+        ];
     }
 }

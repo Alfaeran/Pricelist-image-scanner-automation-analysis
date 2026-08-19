@@ -16,7 +16,8 @@ class ScannerController extends Controller
     public function index()
     {
         return Inertia::render('Scanner/Index', [
-            'pricelists' => Pricelist::with(['packages', 'chatMessages'])->latest()->take(20)->get()
+            'pricelists' => Pricelist::with(['packages', 'chatMessages'])->latest()->take(20)->get(),
+            'baselineProducts' => \App\Models\BaselineProduct::orderBy('provider')->get(),
         ]);
     }
 
@@ -28,7 +29,9 @@ class ScannerController extends Controller
             'images' => 'nullable|array',
             'images.*' => 'file|max:102400|mimes:jpeg,png,jpg,webp,pdf,zip,csv,txt,xlsx,xls',
             'is_append' => 'boolean',
-            'manual_timestamp' => 'nullable|date'
+            'manual_timestamp' => 'nullable|date',
+            'locations' => 'nullable|array',
+            'locations.*' => 'nullable|string'
         ]);
 
         if (!$request->hasFile('images') && !$request->filled('message')) {
@@ -40,10 +43,12 @@ class ScannerController extends Controller
         }
 
         $files = $request->file('images') ?? [];
+        $locationsInput = $request->input('locations') ?? [];
         $paths = [];
+        $locations = [];
         $originalNames = [];
 
-        foreach ($files as $file) {
+        foreach ($files as $idx => $file) {
             if (!$file->isValid()) {
                 \Log::error('Upload failed with error code: ' . $file->getError() . ' - Message: ' . $file->getErrorMessage());
                 return back()->withErrors(['error' => 'Gagal mengupload file: ' . $file->getErrorMessage()]);
@@ -64,6 +69,7 @@ class ScannerController extends Controller
 
             $originalNames[] = $name;
             $paths[] = $file->storeAs('pricelists', uniqid() . '_' . $name, 'public');
+            $locations[] = $locationsInput[$idx] ?? null;
         }
 
         // 1. Get or Create Pricelist (Session)
@@ -91,7 +97,7 @@ class ScannerController extends Controller
         if (count($paths) > 0) {
             $isAppend = $request->boolean('is_append', false);
             $manualTimestamp = $request->input('manual_timestamp');
-            ProcessPricelistJob::dispatch($pricelist->id, $paths, $isAppend, $manualTimestamp);
+            ProcessPricelistJob::dispatch($pricelist->id, $paths, $isAppend, $manualTimestamp, $locations);
         } else {
             // If just text, we redirect back. The frontend will hit ChatController separately or we can just let it be.
             // Actually, if it's just text, the frontend should just use ChatController directly to get the AI response synchronously.
@@ -461,10 +467,12 @@ class ScannerController extends Controller
     {
         $request->validate([
             'data_file' => 'required|file|mimes:csv,txt,xlsx,xls|max:102400',
-            'manual_timestamp' => 'nullable|date'
+            'manual_timestamp' => 'nullable|date',
+            'location' => 'nullable|string'
         ]);
 
         $manualTimestamp = $request->input('manual_timestamp');
+        $location = $request->input('location');
         $file = $request->file('data_file');
         
         $csvData = [];
@@ -491,7 +499,7 @@ class ScannerController extends Controller
         
         $originalName = $file->getClientOriginalName();
         
-        \Illuminate\Support\Facades\DB::transaction(function () use ($csvData, $originalName, $manualTimestamp) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($csvData, $originalName, $manualTimestamp, $location) {
             $pricelist = Pricelist::create([
                 'filename' => $originalName,
                 'status' => 'processed'
@@ -544,6 +552,7 @@ class ScannerController extends Controller
                     'category' => $category,
                     'product_type' => 'Data',
                     'image_timestamp' => $manualTimestamp,
+                    'image_location' => $location,
                 ]);
             }
         });
@@ -798,6 +807,21 @@ class ScannerController extends Controller
         $filenames = $request->input('filenames', []);
         if (is_array($filenames) && count($filenames) > 0) {
             $query->whereIn('pricelists.filename', $filenames);
+        }
+
+        $circle = $request->input('circle');
+        if ($circle) {
+            $query->where('extracted_packages.circle', $circle);
+        }
+
+        $region = $request->input('region');
+        if ($region) {
+            $query->where('extracted_packages.region', $region);
+        }
+
+        $branch = $request->input('branch');
+        if ($branch) {
+            $query->where('extracted_packages.branch', $branch);
         }
 
         if ($startDate) {
