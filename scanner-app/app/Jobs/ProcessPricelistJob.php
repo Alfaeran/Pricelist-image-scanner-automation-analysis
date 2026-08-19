@@ -190,18 +190,30 @@ class ProcessPricelistJob implements ShouldQueue
                                 elseif ($providerStr == '3ID') $providerStr = '3';
                                 elseif ($providerStr == 'BYU') $providerStr = 'BY.U';
 
-                                $baselineKey = $providerStr . '_' . $gb . '_' . $days;
+                                $fallbackKey = $providerStr . '_' . $gb;
                                 $isNewProduct = false;
                                 $isPriceChanged = false;
+                                $isDaysChanged = false;
                                 $baselinePrice = null;
+                                $baselineDays = null;
 
-                                if (isset($baselineData[$baselineKey])) {
-                                    $baselinePrice = $baselineData[$baselineKey]['price'];
-                                    if ($price !== $baselinePrice) {
-                                        $isPriceChanged = true;
+                                if (in_array($providerStr, $baselineData['providers'])) {
+                                    if (isset($baselineData['exact'][$baselineKey])) {
+                                        $baselinePrice = $baselineData['exact'][$baselineKey]['price'];
+                                        if ($price !== $baselinePrice) {
+                                            $isPriceChanged = true;
+                                        }
+                                    } elseif (isset($baselineData['fallback'][$fallbackKey])) {
+                                        $fallbackMatch = $baselineData['fallback'][$fallbackKey][0];
+                                        $isDaysChanged = true;
+                                        $baselinePrice = $fallbackMatch['price'];
+                                        $baselineDays = $fallbackMatch['days'];
+                                        if ($price !== $baselinePrice) {
+                                            $isPriceChanged = true;
+                                        }
+                                    } else {
+                                        $isNewProduct = true;
                                     }
-                                } else {
-                                    $isNewProduct = true;
                                 }
                                 $imageFilename = $pkg['image_filename'] ?? null;
                                 $branch = null;
@@ -221,7 +233,9 @@ class ProcessPricelistJob implements ShouldQueue
                                     'is_anomaly' => $isAnomaly,
                                     'is_new_product' => $isNewProduct,
                                     'is_price_changed' => $isPriceChanged,
+                                    'is_days_changed' => $isDaysChanged,
                                     'baseline_price' => $baselinePrice,
+                                    'baseline_days' => $baselineDays,
                                     'category' => $isRejected ? 'REJECTED' : $this->categorize((int) $pkg['days'], (int) $pkg['price']),
                                     'product_type' => $pkg['product_type'] ?? null,
                                     'image_timestamp' => $this->manualTimestamp ?? ($pkg['image_timestamp'] ?? null),
@@ -467,50 +481,27 @@ class ProcessPricelistJob implements ShouldQueue
 
     private function getBaselineData(): array
     {
-        $baselineData = [];
-        $fullPath = base_path('List produk.csv');
-        if (file_exists($fullPath)) {
-            if (($handle = fopen($fullPath, "r")) !== FALSE) {
-                $isHeader = true;
-                while (($row = fgetcsv($handle, 1000, ",")) !== FALSE) {
-                    if ($isHeader) {
-                        $isHeader = false;
-                        continue;
-                    }
-                    if (count($row) < 11) continue;
-                    
-                    $provider = strtoupper(trim($row[1]));
-                    if (!$provider) continue;
-                    
-                    if ($provider == 'SF') $provider = 'SMARTFREN';
-                    elseif ($provider == 'TSEL') $provider = 'TELKOMSEL';
-                    elseif ($provider == '3ID') $provider = '3';
-                    elseif ($provider == 'BYU') $provider = 'BY.U';
-                    
-                    $priceStr = $row[6];
-                    if (empty(trim($priceStr))) {
-                        $priceStr = $row[4];
-                    }
-                    $price = (int) preg_replace('/[^\d]/', '', $priceStr ?? '');
-                    
-                    $gbStr = str_replace(',', '.', $row[7] ?? '');
-                    $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
-                    
-                    $daysStr = $row[10] ?? '';
-                    if (strtolower(trim($daysStr)) === 'follow sim') {
-                        $days = 0;
-                    } else {
-                        $days = (int) preg_replace('/[^\d]/', '', $daysStr);
-                    }
-                    
-                    $key = $provider . '_' . $gb . '_' . $days;
-                    $baselineData[$key] = [
-                        'price' => $price,
-                        'name' => $row[2]
-                    ];
-                }
-                fclose($handle);
+        $baselineData = ['exact' => [], 'fallback' => [], 'providers' => []];
+        $products = \App\Models\BaselineProduct::all();
+        foreach ($products as $product) {
+            $providerStr = strtoupper(trim($product->provider));
+            if (!in_array($providerStr, $baselineData['providers'])) {
+                $baselineData['providers'][] = $providerStr;
             }
+
+            $key = $providerStr . '_' . (float)$product->quota_s . '_' . $product->days;
+            $baselineData['exact'][$key] = [
+                'price' => $product->price,
+                'name' => $product->package_name
+            ];
+            $fallbackKey = $providerStr . '_' . (float)$product->quota_s;
+            if (!isset($baselineData['fallback'][$fallbackKey])) {
+                $baselineData['fallback'][$fallbackKey] = [];
+            }
+            $baselineData['fallback'][$fallbackKey][] = [
+                'price' => $product->price,
+                'days' => $product->days
+            ];
         }
         return $baselineData;
     }

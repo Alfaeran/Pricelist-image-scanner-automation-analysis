@@ -56,6 +56,13 @@ Route::middleware(['auth', 'verified'])->group(function () {
     // AI Insight
     Route::post('/api/scanner/ai-insight', [ScannerController::class, 'aiInsight'])->name('scanner.aiInsight');
 
+    // Baseline Products API
+    Route::get('/api/baseline-products', [\App\Http\Controllers\BaselineProductController::class, 'index'])->name('baseline.index');
+    Route::post('/api/baseline-products', [\App\Http\Controllers\BaselineProductController::class, 'store'])->name('baseline.store');
+    Route::put('/api/baseline-products/{baselineProduct}', [\App\Http\Controllers\BaselineProductController::class, 'update'])->name('baseline.update');
+    Route::delete('/api/baseline-products/{baselineProduct}', [\App\Http\Controllers\BaselineProductController::class, 'destroy'])->name('baseline.destroy');
+    Route::post('/api/baseline-products/bulk', [\App\Http\Controllers\BaselineProductController::class, 'bulkUpdate'])->name('baseline.bulkUpdate');
+
     // Learned Patterns API for Python
     Route::get('/api/learned-patterns', function () {
         $patterns = \App\Models\LearnedPattern::where('is_active', true)

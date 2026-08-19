@@ -1,81 +1,78 @@
 <?php
-$baselineData = [];
-$fullPath = base_path('List produk.csv');
-if (file_exists($fullPath)) {
-    if (($handle = fopen($fullPath, "r")) !== FALSE) {
-        $isHeader = true;
-        while (($row = fgetcsv($handle, 1000, ",")) !== FALSE) {
-            if ($isHeader) {
-                $isHeader = false;
-                continue;
-            }
-            if (count($row) < 11) continue;
-            
-            $provider = strtoupper(trim($row[1]));
-            if (!$provider) continue;
-            
-            if ($provider == 'SF') $provider = 'SMARTFREN';
-            elseif ($provider == 'TSEL') $provider = 'TELKOMSEL';
-            elseif ($provider == '3ID') $provider = '3';
-            elseif ($provider == 'BYU') $provider = 'BY.U';
-            
-            $priceStr = $row[6];
-            if (empty(trim($priceStr))) {
-                $priceStr = $row[4];
-            }
-            $price = (int) preg_replace('/[^\d]/', '', $priceStr ?? '');
-            
-            $gbStr = str_replace(',', '.', $row[7] ?? '');
-            $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
-            
-            $daysStr = $row[10] ?? '';
-            if (strtolower(trim($daysStr)) === 'follow sim') {
-                $days = 0;
+
+require __DIR__ . '/vendor/autoload.php';
+$app = require_once __DIR__ . '/bootstrap/app.php';
+$kernel = $app->make(Illuminate\Contracts\Console\Kernel::class);
+$kernel->bootstrap();
+
+$baselineData = ['exact' => [], 'fallback' => [], 'providers' => []];
+$products = \App\Models\BaselineProduct::all();
+foreach ($products as $product) {
+    $providerStr = strtoupper(trim($product->provider));
+    if (!in_array($providerStr, $baselineData['providers'])) {
+        $baselineData['providers'][] = $providerStr;
+    }
+
+    $key = $providerStr . '_' . (float)$product->quota_s . '_' . $product->days;
+    $baselineData['exact'][$key] = [
+        'price' => $product->price,
+        'name' => $product->package_name
+    ];
+    $fallbackKey = $providerStr . '_' . (float)$product->quota_s;
+    if (!isset($baselineData['fallback'][$fallbackKey])) {
+        $baselineData['fallback'][$fallbackKey] = [];
+    }
+    $baselineData['fallback'][$fallbackKey][] = [
+        'price' => $product->price,
+        'days' => $product->days
+    ];
+}
+
+\App\Models\ExtractedPackage::chunk(100, function ($pkgs) use ($baselineData) {
+    foreach ($pkgs as $pkg) {
+        if (!isset($pkg->gb, $pkg->days, $pkg->price)) continue;
+        
+        $providerStr = strtoupper(trim($pkg->provider ?? 'UNKNOWN'));
+        if ($providerStr == 'SF') $providerStr = 'SMARTFREN';
+        elseif ($providerStr == 'TSEL') $providerStr = 'TELKOMSEL';
+        elseif ($providerStr == '3ID') $providerStr = '3';
+        elseif ($providerStr == 'BYU') $providerStr = 'BY.U';
+
+        $key = $providerStr . '_' . (float)$pkg->gb . '_' . $pkg->days;
+        $fallbackKey = $providerStr . '_' . (float)$pkg->gb;
+        
+        $isNewProduct = false;
+        $isPriceChanged = false;
+        $isDaysChanged = false;
+        $baselinePrice = null;
+        $baselineDays = null;
+
+        if (in_array($providerStr, $baselineData['providers'])) {
+            if (isset($baselineData['exact'][$key])) {
+                $baselinePrice = $baselineData['exact'][$key]['price'];
+                if ($pkg->price !== $baselinePrice) {
+                    $isPriceChanged = true;
+                }
+            } elseif (isset($baselineData['fallback'][$fallbackKey])) {
+                $fallbackMatch = $baselineData['fallback'][$fallbackKey][0];
+                $isDaysChanged = true;
+                $baselinePrice = $fallbackMatch['price'];
+                $baselineDays = $fallbackMatch['days'];
+                if ($pkg->price !== $baselinePrice) {
+                    $isPriceChanged = true;
+                }
             } else {
-                $days = (int) preg_replace('/[^\d]/', '', $daysStr);
+                $isNewProduct = true;
             }
-            
-            $key = $provider . '_' . $gb . '_' . $days;
-            $baselineData[$key] = [
-                'price' => $price,
-                'name' => $row[2]
-            ];
         }
-        fclose($handle);
+
+        $pkg->update([
+            'is_new_product' => $isNewProduct,
+            'is_price_changed' => $isPriceChanged,
+            'is_days_changed' => $isDaysChanged,
+            'baseline_price' => $baselinePrice,
+            'baseline_days' => $baselineDays,
+        ]);
     }
-}
-
-$packages = App\Models\ExtractedPackage::all();
-$updated = 0;
-foreach ($packages as $pkg) {
-    $providerStr = strtoupper(trim($pkg->provider ?? 'UNKNOWN'));
-    if ($providerStr == 'SF') $providerStr = 'SMARTFREN';
-    elseif ($providerStr == 'TSEL') $providerStr = 'TELKOMSEL';
-    elseif ($providerStr == '3ID') $providerStr = '3';
-    elseif ($providerStr == 'BYU') $providerStr = 'BY.U';
-
-    $gb = (float) $pkg->gb;
-    $days = (int) $pkg->days;
-    $price = (int) $pkg->price;
-
-    $baselineKey = $providerStr . '_' . $gb . '_' . $days;
-    $isNewProduct = false;
-    $isPriceChanged = false;
-    $baselinePrice = null;
-
-    if (isset($baselineData[$baselineKey])) {
-        $baselinePrice = $baselineData[$baselineKey]['price'];
-        if ($price !== $baselinePrice) {
-            $isPriceChanged = true;
-        }
-    } else {
-        $isNewProduct = true;
-    }
-
-    $pkg->is_new_product = $isNewProduct;
-    $pkg->is_price_changed = $isPriceChanged;
-    $pkg->baseline_price = $baselinePrice;
-    $pkg->save();
-    $updated++;
-}
-echo "Updated $updated packages.\n";
+});
+echo "Done backfilling with provider check.\n";

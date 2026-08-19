@@ -43,6 +43,8 @@ const fetchLearnedPatterns = async () => {
   }
 };
 
+// baselineProducts will be initialized from props below
+
 const globalNotification = ref({ show: false, type: 'info', message: '' });
 
 const showNotification = (type, message) => {
@@ -74,7 +76,10 @@ import { marked } from "marked";
 
 const props = defineProps({
   pricelists: Array,
+  baselineProducts: Array,
 });
+
+const baselineProducts = ref(props.baselineProducts || []);
 
 // ─── State ────────────────────────────────────────────────────────
 const form = useForm({ message: "", images: [], locations: [], manual_timestamp: "" });
@@ -102,6 +107,7 @@ const filters = ref({
   categories: [],
   flags: [],
   search: '', // package name
+  location: '', // location
   priceMin: null,
   priceMax: null,
   gbMin: null,
@@ -506,6 +512,8 @@ watch(activeSessionId, () => {
 // Data Table & Insights toggles (per pricelist id)
 const activeTables = ref({});
 const activeInsights = ref({});
+const selectedEditRows = ref({});
+const editingPackageIds = ref({});
 const chatInputs = ref({});
 const chatLoading = ref({});
 
@@ -550,6 +558,9 @@ const filteredPackagesList = computed(() => {
     if (f.providers.length > 0 && !f.providers.includes(prov)) return false;
     if (f.categories.length > 0 && !f.categories.includes(pkg.category)) return false;
     if (f.search && pkg.package_name && !pkg.package_name.toLowerCase().includes(f.search.toLowerCase())) return false;
+    
+    const loc = pkg.branch || pkg.image_location || '';
+    if (f.location && !loc.toLowerCase().includes(f.location.toLowerCase())) return false;
     
     const gb = Number(pkg.gb);
     if (f.gbMin !== null && f.gbMin !== '' && gb < Number(f.gbMin)) return false;
@@ -1573,7 +1584,8 @@ const submit = () => {
   });
 };
 
-const uploadDataForm = useForm({ data_file: null, manual_timestamp: "" });
+const uploadDataForm = useForm({ data_file: null, manual_timestamp: "", location: "" });
+const uploadDataRegion = ref("");
 const uploadData = () => {
   if (!uploadDataForm.data_file) return;
 
@@ -2124,10 +2136,14 @@ const showComparisonDetail = (pkg, csvResult) => {
 const toggleEditTable = (listId, packages) => {
   if (isEditingTable.value[listId]) {
     isEditingTable.value[listId] = false;
+    selectedEditRows.value[listId] = [];
+    editingPackageIds.value[listId] = [];
   } else {
     editablePackages.value[listId] = JSON.parse(JSON.stringify(packages));
+    editingPackageIds.value[listId] = packages.map(p => p.id).filter(id => id);
     isEditingTable.value[listId] = true;
     activeTables.value[listId] = true;
+    selectedEditRows.value[listId] = [];
   }
 };
 
@@ -2159,13 +2175,43 @@ const deleteRow = (listId, index) => {
   editablePackages.value[listId].splice(index, 1);
 };
 
+const toggleSelectAllEdit = (listId, event) => {
+  if (event.target.checked) {
+    selectedEditRows.value[listId] = editablePackages.value[listId].map((_, i) => i);
+  } else {
+    selectedEditRows.value[listId] = [];
+  }
+};
+
+const deleteSelectedRows = (listId) => {
+  const selected = selectedEditRows.value[listId] || [];
+  if (selected.length === 0) return;
+  // Delete in reverse order to keep indices valid
+  const sortedSelected = [...selected].sort((a, b) => b - a);
+  sortedSelected.forEach(idx => {
+    editablePackages.value[listId].splice(idx, 1);
+  });
+  selectedEditRows.value[listId] = [];
+};
+
 const savePackages = async (listId) => {
   savingTable.value[listId] = true;
   try {
+    const list = props.pricelists.find(p => p.id === listId);
+    const originalList = list ? list.packages : [];
+    const editedIdsSet = new Set(editingPackageIds.value[listId] || []);
+    
+    // Packages that were NOT in the edit view (should be preserved)
+    const preservedPackages = originalList.filter(p => !editedIdsSet.has(p.id));
+    
+    const finalPackages = [...preservedPackages, ...editablePackages.value[listId]];
+
     await axios.put(route("scanner.packages.update", listId), {
-      packages: editablePackages.value[listId],
+      packages: finalPackages,
     });
     isEditingTable.value[listId] = false;
+    selectedEditRows.value[listId] = [];
+    editingPackageIds.value[listId] = [];
     router.reload({ only: ["pricelists"], preserveScroll: true, preserveState: true });
   } catch (e) {
     showError(e, "Gagal menyimpan data");
@@ -2181,6 +2227,61 @@ const openEditPrompt = (list) => {
     messageId: firstMsg ? firstMsg.id : null,
     content: firstMsg ? firstMsg.content : "Tolong scan gambar ini.",
   };
+};
+
+// Baseline Editable Table States
+const isEditingBaseline = ref(false);
+const editableBaselineProducts = ref(JSON.parse(JSON.stringify(props.baselineProducts || [])));
+const savingBaseline = ref(false);
+
+const toggleEditBaselineTable = () => {
+  if (isEditingBaseline.value) {
+    isEditingBaseline.value = false;
+  } else {
+    editableBaselineProducts.value = JSON.parse(JSON.stringify(baselineProducts.value));
+    isEditingBaseline.value = true;
+  }
+};
+
+const addEmptyBaselineRow = () => {
+  editableBaselineProducts.value.push({
+    criteria: "HARIAN",
+    provider: "TSEL",
+    package_name: "",
+    rbp_vori: null,
+    rbp_rebuy: null,
+    rbp_inject: null,
+    price: 0,
+    quota_s: 0,
+    quota_e: 0,
+    quota_a: 0,
+    days: 1,
+  });
+};
+
+const deleteBaselineRow = (index) => {
+  editableBaselineProducts.value.splice(index, 1);
+};
+
+const saveBaselineProducts = async () => {
+  savingBaseline.value = true;
+  try {
+    await axios.post(route("baseline.bulkUpdate"), {
+      packages: editableBaselineProducts.value,
+    });
+    router.reload({ only: ['baselineProducts'] });
+    Swal.fire({
+      toast: true,
+      position: 'top-end',
+      icon: 'success',
+      title: 'Data Baseline berhasil disimpan',
+      showConfirmButton: false,
+      timer: 3000
+    });
+  } catch (e) {
+    showError(e, "Gagal menyimpan data baseline");
+  }
+  savingBaseline.value = false;
 };
 
 const openImage = (url) => {
@@ -2904,6 +3005,31 @@ onUnmounted(() => {
                   <div class="w-full max-w-xs mt-1 mb-2 flex flex-col pointer-events-auto">
                     <label class="text-[11px] text-theme-text-secondary mb-1">Atur Waktu (Opsional)</label>
                     <input type="date" v-model="uploadDataForm.manual_timestamp" class="w-full bg-theme-surface border border-theme-border-default rounded-lg text-sm text-theme-text-primary px-3 py-2 focus:ring-theme-brand-secondary focus:border-theme-brand-secondary text-center shadow-sm">
+                  </div>
+                  
+                  <div class="w-full max-w-xs mb-2 flex flex-col pointer-events-auto">
+                    <label class="text-[11px] text-theme-text-secondary mb-1">Pilih Lokasi (Opsional)</label>
+                    <div class="flex flex-col sm:flex-row gap-2 w-full mt-0">
+                      <select v-model="uploadDataRegion" @change="uploadDataForm.location = ''" class="flex-1 text-sm bg-theme-surface border border-theme-border-default rounded-lg px-2 py-2 focus:ring-theme-brand-secondary focus:border-theme-brand-secondary text-theme-text-primary shadow-sm">
+                        <option value="">-- Pilih Region --</option>
+                        <option v-for="group in branchOptions" :key="'ud_' + group.group" :value="group.group">{{ group.group }}</option>
+                      </select>
+                      <div class="flex-1 w-full">
+                        <input 
+                          type="text"
+                          v-model="uploadDataForm.location" 
+                          list="ud-branch-list" 
+                          :disabled="!uploadDataRegion"
+                          placeholder="-- Ketik / Pilih Branch --"
+                          class="w-full text-sm bg-theme-surface border border-theme-border-default rounded-lg px-2 py-2 focus:ring-theme-brand-secondary focus:border-theme-brand-secondary text-theme-text-primary shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                        <datalist id="ud-branch-list">
+                          <template v-if="uploadDataRegion">
+                            <option v-for="branch in (branchOptions.find(g => g.group === uploadDataRegion)?.options || [])" :key="'ud_' + branch" :value="branch"></option>
+                          </template>
+                        </datalist>
+                      </div>
+                    </div>
                   </div>
 
                   <div class="flex gap-4 mt-3 pointer-events-auto">
@@ -4054,6 +4180,30 @@ onUnmounted(() => {
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"></path></svg>
                     Filter
                   </button>
+                  <button
+                    v-if="!isEditingTable[activeSession.id]"
+                    @click="toggleEditTable(activeSession.id, filteredPackagesList)"
+                    class="text-xs px-3 py-1.5 bg-orange-500 hover:bg-orange-400 rounded-md text-white transition border border-orange-500 flex items-center justify-center gap-1 text-center font-medium shadow-sm active:scale-[0.98] transition-transform"
+                  >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"></path></svg>
+                    Edit Data
+                  </button>
+                  <button
+                    v-if="isEditingTable[activeSession.id]"
+                    @click="savePackages(activeSession.id)"
+                    class="text-xs px-3 py-1.5 bg-green-600 hover:bg-green-500 rounded-md text-white transition border border-green-500 flex items-center justify-center gap-1 text-center font-medium shadow-sm active:scale-[0.98] transition-transform"
+                  >
+                    <svg v-if="savingTable[activeSession.id]" class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                    <svg v-else class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                    Simpan Perubahan
+                  </button>
+                  <button
+                    v-if="isEditingTable[activeSession.id]"
+                    @click="toggleEditTable(activeSession.id, filteredPackagesList)"
+                    class="text-xs px-3 py-1.5 bg-slate-500 hover:bg-slate-400 rounded-md text-white transition border border-slate-500 flex items-center justify-center gap-1 text-center font-medium shadow-sm active:scale-[0.98] transition-transform"
+                  >
+                    Batal
+                  </button>
 
                   <button
                     @click="toggleTable(activeSession.id)"
@@ -4122,6 +4272,12 @@ onUnmounted(() => {
                               {{ prov }}
                             </label>
                           </div>
+                        </div>
+
+                        <!-- Lokasi -->
+                        <div>
+                          <h5 class="text-xs font-bold text-slate-600 mb-2 uppercase">Lokasi</h5>
+                          <input type="text" v-model="filters.location" placeholder="Cari lokasi..." class="w-full bg-theme-surface border border-theme-border-default rounded px-3 py-1.5 text-xs text-theme-text-primary focus:border-theme-brand-secondary outline-none placeholder-theme-text-muted shadow-sm" />
                         </div>
 
                         <!-- Kategori -->
@@ -4269,8 +4425,21 @@ onUnmounted(() => {
                       class="text-[11px] text-theme-text-secondary uppercase bg-theme-secondary border-b border-theme-border-subtle font-bold"
                     >
                       <tr>
+                        <th
+                          v-if="
+                            isEditingTable[
+                              activeSession.id
+                            ]
+                          "
+                          class="px-4 py-3"
+                        >
+                          <input type="checkbox" :checked="selectedEditRows[activeSession.id]?.length === editablePackages[activeSession.id]?.length && editablePackages[activeSession.id]?.length > 0" @change="toggleSelectAllEdit(activeSession.id, $event)" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
+                        </th>
                         <th class="px-4 py-3">
                           TimeStamp
+                        </th>
+                        <th class="px-4 py-3">
+                          Lokasi
                         </th>
                         <th class="px-4 py-3">
                           Provider
@@ -4343,6 +4512,9 @@ onUnmounted(() => {
                         <td class="px-4 py-3 text-slate-600 text-xs truncate max-w-[150px]" :title="pkg.image_timestamp || pkg.created_at">
                           {{ pkg.image_timestamp || (pkg.created_at ? pkg.created_at.replace('T', ' ').substring(0, 19) : '-') }}
                         </td>
+                        <td class="px-4 py-3 text-slate-600 text-xs truncate max-w-[150px]" :title="pkg.branch || pkg.image_location || '-'">
+                          {{ pkg.branch || pkg.image_location || '-' }}
+                        </td>
                         <td
                           class="px-4 py-3 font-bold text-slate-800 transition-colors"
                         >
@@ -4366,15 +4538,16 @@ onUnmounted(() => {
                         >
                           {{ pkg.gb }} GB
                         </td>
-                        <td
-                          class="px-4 py-3 text-right text-slate-600"
-                        >
-                          {{ pkg.days }} Hari
+                        <td class="px-4 py-3 text-right text-slate-600">
+                          <div class="flex flex-col items-end gap-1">
+                            <span v-if="pkg.is_days_changed" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-yellow-100 text-yellow-700 border border-yellow-200 whitespace-nowrap" :title="'Masa aktif baseline: ' + pkg.baseline_days + ' Hari'">MASA AKTIF BEDA</span>
+                            <span>{{ pkg.days }} Hari</span>
+                          </div>
                         </td>
                         <td
                           class="px-4 py-3 text-right text-slate-800 font-medium"
                         >
-                          <div class="flex items-center justify-end gap-2">
+                          <div class="flex flex-col items-end gap-1">
                             <span v-if="pkg.is_price_changed" class="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 border border-orange-200 whitespace-nowrap" :title="'Harga baseline: Rp ' + Number(pkg.baseline_price).toLocaleString('id-ID')">HARGA BEDA</span>
                             <span>Rp {{ Number(pkg.price).toLocaleString("id-ID") }}</span>
                           </div>
@@ -4428,8 +4601,14 @@ onUnmounted(() => {
                         :key="idx"
                         class="border-b border-theme-border-default bg-theme-surface hover:bg-theme-secondary/80"
                       >
+                        <td class="px-2 py-2 text-center">
+                          <input type="checkbox" :value="idx" v-model="selectedEditRows[activeSession.id]" class="rounded bg-white border-slate-300 text-blue-600 focus:ring-blue-500/50 cursor-pointer shadow-xs" />
+                        </td>
                         <td class="px-2 py-2">
                           <div class="text-xs text-slate-500 truncate max-w-[100px]" :title="pkg.image_timestamp">{{ pkg.image_timestamp || '-' }}</div>
+                        </td>
+                        <td class="px-2 py-2">
+                          <div class="text-xs text-slate-500 truncate max-w-[100px]" :title="pkg.branch || pkg.image_location || '-'">{{ pkg.branch || pkg.image_location || '-' }}</div>
                         </td>
                         <td class="px-2 py-2">
                           <input
@@ -4625,6 +4804,134 @@ onUnmounted(() => {
                 </div>
               </div>
             </div>
+            <!-- Baseline Products Widget -->
+            <div
+              class="anim-on-scroll bg-white border border-slate-200 rounded-2xl overflow-hidden shadow-md mb-8"
+            >
+              <div
+                class="px-6 py-4 border-b border-slate-200 bg-slate-50 flex justify-between items-center"
+              >
+                <h3
+                  class="font-semibold text-slate-800 flex items-center gap-2"
+                >
+                  <div
+                    class="w-2 h-2 rounded-full bg-blue-500 shadow-xs"
+                  ></div>
+                  Data Produk Baseline ({{ baselineProducts.length }} produk)
+                </h3>
+                <div class="flex items-stretch gap-3">
+                  <button
+                    @click="toggleEditBaselineTable"
+                    class="text-xs px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-md text-slate-700 font-semibold transition border border-slate-300 flex items-center justify-center h-full text-center shadow-xs active:scale-[0.98] transition-transform"
+                  >
+                    {{
+                      isEditingBaseline
+                        ? "Sembunyikan Tabel"
+                        : "Lihat Tabel / Edit"
+                    }}
+                  </button>
+                </div>
+              </div>
+
+              <div
+                v-show="isEditingBaseline"
+                class="flex flex-col xl:flex-row border-t border-slate-200"
+              >
+                <div class="w-full overflow-x-auto">
+                  <table class="w-full text-sm text-left text-slate-700">
+                    <thead class="text-[11px] text-theme-text-secondary uppercase bg-theme-secondary border-b border-theme-border-subtle font-bold">
+                      <tr>
+                        <th class="px-4 py-3">Kriteria</th>
+                        <th class="px-4 py-3">Provider</th>
+                        <th class="px-4 py-3">Nama Paket</th>
+                        <th class="px-4 py-3 text-right">RBP VORI</th>
+                        <th class="px-4 py-3 text-right">RBP Rebuy</th>
+                        <th class="px-4 py-3 text-right">RBP Inject</th>
+                        <th class="px-4 py-3 text-right">Harga (Rp)</th>
+                        <th class="px-4 py-3 text-right">Kuota S</th>
+                        <th class="px-4 py-3 text-right">Kuota E</th>
+                        <th class="px-4 py-3 text-right">Kuota A</th>
+                        <th class="px-4 py-3 text-right">Masa Aktif</th>
+                        <th class="px-4 py-3 text-center">Aksi</th>
+                      </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 bg-white">
+                      <tr
+                        v-for="(pkg, idx) in editableBaselineProducts"
+                        :key="'b_' + idx"
+                        class="hover:bg-slate-50 transition-colors group"
+                      >
+                        <td class="px-4 py-2">
+                          <input v-model="pkg.criteria" class="w-full bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input v-model="pkg.provider" class="w-20 font-bold bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input v-model="pkg.package_name" class="w-full font-medium bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input v-model="pkg.rbp_vori" placeholder="-" class="w-16 font-mono bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1 text-right" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input v-model="pkg.rbp_rebuy" placeholder="-" class="w-16 font-mono bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1 text-right" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input v-model="pkg.rbp_inject" placeholder="-" class="w-16 font-mono bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1 text-right" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input type="number" v-model="pkg.price" class="w-24 text-right font-mono bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input type="number" v-model="pkg.quota_s" class="w-16 text-right font-mono bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input type="number" v-model="pkg.quota_e" class="w-16 text-right font-mono bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input type="number" v-model="pkg.quota_a" class="w-16 text-right font-mono bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1" />
+                        </td>
+                        <td class="px-4 py-2">
+                          <input type="number" v-model="pkg.days" class="w-16 text-right font-mono bg-transparent border-0 border-b border-transparent focus:border-blue-500 focus:ring-0 text-xs px-0 py-1" />
+                        </td>
+                        <td class="px-4 py-2 text-center align-middle">
+                          <button
+                            @click="deleteBaselineRow(idx)"
+                            class="text-red-700 hover:text-red-800 p-1.5 bg-red-50 hover:bg-red-100 border border-red-200 rounded transition shadow-xs active:scale-[0.98] transition-transform"
+                            title="Hapus Baris"
+                          >
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                          </button>
+                        </td>
+                      </tr>
+                      <tr>
+                        <td colspan="12" class="px-4 py-4 bg-slate-50 border-t border-slate-200">
+                          <div class="flex justify-between items-center">
+                            <button
+                              @click="addEmptyBaselineRow"
+                              class="px-3 py-1.5 bg-white hover:bg-slate-100 border border-slate-300 rounded text-xs font-semibold text-slate-700 transition flex items-center gap-1 shadow-sm active:scale-[0.98] transition-transform"
+                            >
+                              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                              Tambah Data Manual
+                            </button>
+                            <button
+                              @click="saveBaselineProducts"
+                              class="px-4 py-1.5 bg-blue-600 hover:bg-blue-500 rounded text-sm text-white font-semibold transition shadow-md flex items-center gap-2 active:scale-[0.98] transition-transform"
+                              :disabled="savingBaseline"
+                            >
+                              <svg v-if="savingBaseline" class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                              <svg v-else class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                              Simpan Perubahan
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+            
             <!-- Rejected Packages Table -->
             <div v-if="rejectedPackages.length > 0" class="mt-8 border-t-2 border-theme-semantic-danger pt-6">
               <div class="flex items-center gap-2 mb-4">
@@ -5260,6 +5567,34 @@ onUnmounted(() => {
             <h3 class="text-lg font-bold text-slate-800 dark:text-slate-100 mb-4 text-center break-words max-w-full">
               {{ form.images[0]?.name }}
             </h3>
+            
+            <!-- Location Selector for CSV -->
+            <div class="w-full flex flex-col mb-4 pointer-events-auto">
+              <label class="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">Pilih Lokasi (Opsional)</label>
+              <div class="w-full bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 p-2 shadow-inner">
+                <div class="flex flex-col sm:flex-row gap-2 w-full mt-0">
+                  <select v-model="selectedRegions[0]" @change="form.locations[0] = ''" class="flex-1 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
+                    <option value="">-- Pilih Region --</option>
+                    <option v-for="group in branchOptions" :key="group.group" :value="group.group">{{ group.group }}</option>
+                  </select>
+                  <div class="flex-1 w-full">
+                    <input 
+                      type="text"
+                      v-model="form.locations[0]" 
+                      list="branch-list-modal-csv" 
+                      :disabled="!selectedRegions[0]"
+                      placeholder="-- Ketik / Pilih Branch --"
+                      class="w-full text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                    <datalist id="branch-list-modal-csv">
+                      <template v-if="selectedRegions[0]">
+                        <option v-for="opt in branchOptions.find(g => g.group === selectedRegions[0])?.options || []" :key="opt" :value="opt"></option>
+                      </template>
+                    </datalist>
+                  </div>
+                </div>
+              </div>
+            </div>
           </template>
           
           <!-- Timestamp Override -->

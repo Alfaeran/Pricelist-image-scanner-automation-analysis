@@ -16,7 +16,8 @@ class ScannerController extends Controller
     public function index()
     {
         return Inertia::render('Scanner/Index', [
-            'pricelists' => Pricelist::with(['packages', 'chatMessages'])->latest()->take(20)->get()
+            'pricelists' => Pricelist::with(['packages', 'chatMessages'])->latest()->take(20)->get(),
+            'baselineProducts' => \App\Models\BaselineProduct::orderBy('provider')->get(),
         ]);
     }
 
@@ -466,10 +467,12 @@ class ScannerController extends Controller
     {
         $request->validate([
             'data_file' => 'required|file|mimes:csv,txt,xlsx,xls|max:102400',
-            'manual_timestamp' => 'nullable|date'
+            'manual_timestamp' => 'nullable|date',
+            'location' => 'nullable|string'
         ]);
 
         $manualTimestamp = $request->input('manual_timestamp');
+        $location = $request->input('location');
         $file = $request->file('data_file');
         
         $csvData = [];
@@ -496,7 +499,7 @@ class ScannerController extends Controller
         
         $originalName = $file->getClientOriginalName();
         
-        \Illuminate\Support\Facades\DB::transaction(function () use ($csvData, $originalName, $manualTimestamp) {
+        \Illuminate\Support\Facades\DB::transaction(function () use ($csvData, $originalName, $manualTimestamp, $location) {
             $pricelist = Pricelist::create([
                 'filename' => $originalName,
                 'status' => 'processed'
@@ -549,6 +552,7 @@ class ScannerController extends Controller
                     'category' => $category,
                     'product_type' => 'Data',
                     'image_timestamp' => $manualTimestamp,
+                    'image_location' => $location,
                 ]);
             }
         });
