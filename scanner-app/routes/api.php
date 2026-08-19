@@ -29,7 +29,10 @@ Route::prefix('whatsapp')->group(function () {
 // ──────────────────────────────────────────────
 // WhatsApp Dashboard API (Web Auth required)
 // ──────────────────────────────────────────────
-Route::middleware(['web', 'auth'])->prefix('whatsapp')->group(function () {
+// 'web' brings the session and AutoAuthenticateDesktop, which signs in the
+// local user. 'auth' is deliberately absent: there is no login route to
+// redirect to any more, so leaving it here turns every call into a 500.
+Route::middleware(['web'])->prefix('whatsapp')->group(function () {
     // Connection status
     Route::get('/status', [WhatsAppWebhookController::class, 'connectionStatus'])
         ->name('whatsapp.status');
