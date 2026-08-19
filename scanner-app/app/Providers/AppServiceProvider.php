@@ -12,7 +12,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // Bound here rather than in NativeAppServiceProvider: that class is
+        // owned by NativePHP and is no longer a Laravel service provider, so
+        // its register() is never called.
+        $this->app->singleton(\App\Services\ProcessManager::class);
     }
 
     /**

@@ -6,44 +6,53 @@ use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
-use Illuminate\Support\ServiceProvider;
+use Native\Desktop\Contracts\ProvidesPhpIni;
+use Native\Desktop\Facades\Window;
 
-class NativeAppServiceProvider extends ServiceProvider
+/**
+ * Entry point for the desktop app.
+ *
+ * This is NOT a Laravel service provider. NativePHP resolves the class named by
+ * config('nativephp.provider') and calls boot() exactly once, when the desktop
+ * app reports itself booted. Registering it in bootstrap/providers.php would
+ * make Laravel call boot() on every request and open a window each time.
+ */
+class NativeAppServiceProvider implements ProvidesPhpIni
 {
     /**
-     * Register services.
-     */
-    public function register(): void
-    {
-        $this->app->singleton(\App\Services\ProcessManager::class, function ($app) {
-            return new \App\Services\ProcessManager();
-        });
-    }
-
-    /**
-     * Bootstrap services.
+     * Prepare the app and put a window on screen.
      *
-     * When running as a NativePHP desktop app, this provider automatically
-     * starts the FastAPI subprocess and the queue worker so the user doesn't
-     * need to manage multiple terminals.
+     * Nothing is visible until Window::open() is called - Electron will happily
+     * run with no window at all.
      */
     public function boot(): void
     {
-        // Only auto-start subprocesses when running as a native desktop app
-        if ($this->isNativeDesktop()) {
-            $this->ensureSqliteDatabase();
-            $this->startManagedProcesses();
-        }
+        $this->ensureSqliteDatabase();
+        $this->startManagedProcesses();
+
+        $window = (array) config('nativephp.window', []);
+
+        Window::open()
+            ->title((string) config('app.name'))
+            ->width($window['width'] ?? 1400)
+            ->height($window['height'] ?? 900)
+            ->minWidth($window['min_width'] ?? 1024)
+            ->minHeight($window['min_height'] ?? 700)
+            ->resizable($window['resizable'] ?? true);
     }
 
     /**
-     * Detect whether we are running inside a NativePHP desktop context.
+     * php.ini directives for the bundled PHP runtime. Brochure scans are
+     * image-heavy, and the defaults are too small for a multi-image upload.
      */
-    protected function isNativeDesktop(): bool
+    public function phpIni(): array
     {
-        // NativePHP sets this environment variable when running as desktop
-        return env('NATIVEPHP_RUNNING', false)
-            || (class_exists(\Native\Laravel\Facades\Window::class) && app()->runningInConsole() === false);
+        return [
+            'upload_max_filesize' => '64M',
+            'post_max_size' => '64M',
+            'memory_limit' => '512M',
+            'max_execution_time' => '300',
+        ];
     }
 
     /**
