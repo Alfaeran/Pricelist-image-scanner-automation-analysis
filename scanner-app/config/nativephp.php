@@ -69,7 +69,24 @@ return [
 
     'updater' => [
         'enabled' => env('NATIVEPHP_UPDATER_ENABLED', false),
-        'url' => env('NATIVEPHP_UPDATER_URL', null),
+
+        // Resolved even when disabled, so it must name a real provider with a
+        // driver - a bare url key fails the build with "Driver [null]".
+        'default' => env('NATIVEPHP_UPDATER_PROVIDER', 'github'),
+
+        'providers' => [
+            'github' => [
+                'driver' => 'github',
+                'repo' => env('GITHUB_REPO'),
+                'owner' => env('GITHUB_OWNER'),
+                'token' => env('GITHUB_TOKEN'),
+                'vPrefixedTagName' => env('GITHUB_V_PREFIXED_TAG_NAME', true),
+                'private' => env('GITHUB_PRIVATE', false),
+                'autoupdate_token' => env('GITHUB_AUTOUPDATE_TOKEN'),
+                'channel' => env('GITHUB_CHANNEL', 'latest'),
+                'releaseType' => env('GITHUB_RELEASE_TYPE', 'draft'),
+            ],
+        ],
     ],
 
     /*
@@ -108,7 +125,19 @@ return [
     |
     */
 
+    // Fallback interpreter, used only when no bundled venv is found below.
     'python_path' => env('NATIVEPHP_PYTHON_PATH', 'python'),
+
+    /*
+    | Interpreters shipped inside the app, tried before falling back to a
+    | system Python. scanner-app/venv is bundled into the installer with the
+    | pipeline's dependencies already installed, so a normal user never has to
+    | install Python themselves. Set NATIVEPHP_PYTHON_PATH to override.
+    */
+    'python_venv' => [
+        base_path('venv/Scripts/python.exe'),   // Windows
+        base_path('venv/bin/python'),           // macOS / Linux
+    ],
 
     'fastapi_port' => (int) env('NATIVEPHP_FASTAPI_PORT', 8091),
 
@@ -131,7 +160,19 @@ return [
     */
 
     // Secrets that must never end up inside a shipped installer.
+    //
+    // The bundle ships an unencrypted .env, so anything left here is readable
+    // by whoever installs the app. These app-specific keys are credentials for
+    // OUR accounts, not the user's, so they are stripped. Gemini keys are not
+    // listed because they live in the api_keys table, entered per install.
     'cleanup_env_keys' => [
+        'WHATSAPP_*',
+        'MAIL_PASSWORD',
+        'MAIL_USERNAME',
+        'REDIS_PASSWORD',
+        '*_TOKEN',
+        '*_API_KEY',
+        '*_PASSWORD',
         'AWS_*',
         'AZURE_*',
         'GITHUB_*',

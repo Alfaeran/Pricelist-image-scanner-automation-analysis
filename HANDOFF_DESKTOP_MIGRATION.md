@@ -98,7 +98,67 @@ D:\pricelist-scanner-automation-dashboard\
 - Test suite: **33/45 passing, 0 non-auth failures.** The 7 remaining failures are all in
   `tests/Feature/Auth/` and are the *expected* consequence of auto-login — Phase 4 removes them.
 
-### Phase 3: FastAPI Port Update
+### ~~Phase 3: FastAPI Port Update~~ ✅ DONE (aea7c88)
+- Port now from `NATIVEPHP_FASTAPI_PORT` → `FASTAPI_PORT` → `8091`; binds **127.0.0.1**, not
+  0.0.0.0, so the bundled engine isn't on the network. Docker still serves 8081 (its compose
+  command passes `--host/--port` explicitly, overriding the `__main__` block).
+- The hardcoded `http://127.0.0.1:8000` callbacks in `fastapi_app.py` (status push) and
+  `pipeline.py` (learned patterns) now read `LARAVEL_URL`. `ProcessManager` injects it.
+- Verified live: FastAPI booted on 127.0.0.1:8091, `/docs` → 200, 6 routes.
+
+### ~~Phase 4: Auth Removal~~ ✅ DONE (afd05ac)
+- Deleted `routes/auth.php`, auth + profile controllers/requests/pages/tests, `Welcome.vue`,
+  and the layout's settings dropdown + mobile user block. `/` → redirect to `/scanner`.
+- Also removed `/phpinfo` (leaks full PHP config from a shipped desktop app).
+- Found and removed two nav links to `route('vlr.index')` — **not a registered route**. Ziggy
+  throws on unknown names; it survived only because the layout is unreachable
+  (`Scanner/Index.vue` imported it without rendering it; `/dashboard` just redirects).
+- 24 tests, 0 failures. New tests assert the redirect and that a guest is auto-signed-in.
+
+### ~~Phase 5: README & Docker~~ ✅ DONE (3657d7e)
+- README leads with the desktop app; Docker/Manual/Hybrid reframed as server/dev paths.
+  Removed the obsolete default-login section.
+- `docker-compose.yml` marked server-only **and** given `LARAVEL_URL`: inside the container the
+  old `127.0.0.1:8000` resolved to the FastAPI container itself, so status callbacks had always
+  failed silently into the try/except. Now `host.docker.internal`.
+- Kept `composer dev` as the web flow — `native:serve` is deprecated and `native:install`
+  already added `native:dev` (which uses `native:run`).
+
+### ~~Phase 6: Desktop UX~~ ✅ DONE (549e2e3)
+- Sidebar shows engine status dot + detail + version + **Restart** button (uses the page's
+  existing `showNotification`, polls every 15s).
+- New `SystemController`: `GET /api/system/health`, `POST /api/system/restart`; new
+  `/api/health` on FastAPI.
+- Health **probes FastAPI over HTTP** rather than reading `ProcessManager`'s in-memory state —
+  that state only covers processes the current PHP process started (empty under `artisan serve`
+  and Docker) and can't notice an engine that died. Restart returns 409 rather than faking
+  success for a process it doesn't own.
+
+### ~~Phase 7 groundwork~~ ✅ DONE (70a2198) — build attempt in progress
+- `config/nativephp.php` was hand-written and **missing `provider`**, so the packaged app would
+  have booted with no window and no FastAPI. Added the keys the package actually reads.
+- **`../src` is outside the directory NativePHP bundles** — the installer would have shipped with
+  no AI engine. New `artisan app:bundle-python` copies it to `resources/python` during `prebuild`;
+  `ProcessManager` prefers that copy, falls back to `../src` for dev. (gitignored; `../src` is truth.)
+- NativePHP starts queue workers itself via `queue_workers` config, and `ProcessManager` was
+  starting a second one → two workers on one jobs table. ProcessManager now owns only FastAPI.
+- The `updater` block also had to be reshaped: `UpdaterManager::resolve()` runs **even when
+  `enabled => false`**, so a bare `['enabled','url']` config fails the build with
+  `Driver [null] is not supported`. It needs `default` + `providers[...]['driver']`, and the
+  github provider must carry **every** key the driver reads (`vPrefixedTagName`, `releaseType`
+  — a missing one fails with `Undefined array key`). Copy the block from
+  `vendor/nativephp/desktop/config/nativephp.php` verbatim rather than hand-writing it.
+- ⚠️ **The build warns "Secure app bundle not found! Building with exposed source files."** —
+  the installer ships readable PHP *and an unencrypted `.env`*. An audit of the current `.env`
+  found `WHATSAPP_EVOLUTION_API_KEY`, `WHATSAPP_META_TOKEN`, `WHATSAPP_META_VERIFY_TOKEN`,
+  `MAIL_PASSWORD` and `REDIS_PASSWORD` populated — all of which would have been readable by
+  anyone who installed the app. `cleanup_env_keys` now strips `WHATSAPP_*`, `*_TOKEN`,
+  `*_API_KEY`, `*_PASSWORD`, `MAIL_USERNAME`, `REDIS_PASSWORD`. Gemini keys are safe because
+  they live in the `api_keys` table, entered per install. **Re-check this list whenever a new
+  credential is added to `.env`**, and see https://nativephp.com/docs/publishing/building#security
+  about enabling the secure bundle.
+
+### Phase 3 (original notes): FastAPI Port Update
 - Change default port in `src/fastapi_app.py` line 457 from `8081` to `8091`
 - Update hardcoded webhook URL on line 74: `http://127.0.0.1:8000` should use env var or `webhook_url` param
 - Make sure `scanner-app/.env` (the actual .env, not just .env.example) has `FASTAPI_URL=http://127.0.0.1:8091`

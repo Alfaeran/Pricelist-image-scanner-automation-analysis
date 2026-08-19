@@ -18,10 +18,18 @@ Database memakai **SQLite** (dibuat & dimigrasi otomatis saat pertama kali dijal
 dan FastAPI dijalankan sendiri oleh aplikasi sebagai proses anak pada port **8091**.
 
 ### Persyaratan
-- **Python 3.10+** harus terpasang dan ada di `PATH` (mesin AI Gemini berjalan di Python).
-  Semua kebutuhan lain sudah ikut di dalam installer.
+- **Tidak ada.** Installer sudah membawa PHP, Electron, **dan** Python beserta seluruh
+  dependensi pipeline (`scanner-app/venv`), jadi pengguna akhir tidak perlu memasang apa pun.
+  Kalau ingin memakai Python milik sendiri, set `NATIVEPHP_PYTHON_PATH` — nilai itu selalu menang.
 - Untuk *membangun* installer: PHP 8.4+, Composer, dan Node.js 22+.
   Di mesin ini gunakan PHP bawaan Laragon: `D:\laragon\bin\php\php-8.4.23-Win32-vs16-x64`.
+  Pastikan `scanner-app/venv` ada dan berisi dependensi dari `requirements.txt`, karena
+  venv itulah yang ikut dibundel:
+  ```bash
+  cd scanner-app
+  python -m venv venv
+  ./venv/Scripts/python.exe -m pip install -r ../requirements.txt
+  ```
 
 ### Menjalankan saat pengembangan
 ```bash
@@ -40,7 +48,7 @@ Hasilnya berupa installer Windows di folder `dist/`.
 ### Konfigurasi yang relevan
 | Variabel | Default | Keterangan |
 |---|---|---|
-| `NATIVEPHP_PYTHON_PATH` | `python` | Perintah/lokasi interpreter Python |
+| `NATIVEPHP_PYTHON_PATH` | *(kosong)* | Override interpreter Python. Dikosongkan = pakai venv bawaan aplikasi |
 | `NATIVEPHP_FASTAPI_PORT` | `8091` | Port mesin AI (FastAPI) |
 | `FASTAPI_URL` | `http://127.0.0.1:8091` | Alamat FastAPI yang dipanggil Laravel |
 | `LARAVEL_URL` | `http://127.0.0.1:8000` | Alamat Laravel yang dipanggil balik oleh Python |

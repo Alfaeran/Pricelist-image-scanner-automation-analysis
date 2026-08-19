@@ -105,7 +105,7 @@ class ProcessManager
      */
     protected function startFastApi(): bool
     {
-        $pythonPath = config('nativephp.python_path', 'python');
+        $pythonPath = $this->resolvePythonBinary();
         $port = config('nativephp.fastapi_port', 8091);
         $srcDir = $this->resolvePythonSource();
 
@@ -144,6 +144,33 @@ class ProcessManager
         Log::info("[ProcessManager] FastAPI started on port {$port} (PID: {$process->getPid()})");
 
         return true;
+    }
+
+    /**
+     * Pick the Python interpreter to run the pipeline with.
+     *
+     * The installer ships a venv that already has the pipeline's dependencies,
+     * so prefer it: an end user should not have to install Python at all. An
+     * explicit NATIVEPHP_PYTHON_PATH still wins, for people pointing the app at
+     * their own environment.
+     */
+    protected function resolvePythonBinary(): string
+    {
+        $configured = env('NATIVEPHP_PYTHON_PATH');
+
+        if (!empty($configured)) {
+            return $configured;
+        }
+
+        foreach ((array) config('nativephp.python_venv', []) as $candidate) {
+            if (is_file($candidate)) {
+                Log::info("[ProcessManager] Using bundled Python: {$candidate}");
+
+                return $candidate;
+            }
+        }
+
+        return config('nativephp.python_path', 'python');
     }
 
     /**
