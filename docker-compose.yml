@@ -1,3 +1,13 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# SERVER DEPLOYMENT ONLY.
+#
+# The primary product is now a standalone Windows desktop app (NativePHP +
+# Electron) that runs on SQLite and starts FastAPI itself - it does not use
+# this file at all. See the "Aplikasi Desktop" section in README.md.
+#
+# Keep this stack for hosting the dashboard on a server, where PostgreSQL and
+# a separate queue worker still make sense.
+# ─────────────────────────────────────────────────────────────────────────────
 version: '3.8'
 
 services:
@@ -43,9 +53,16 @@ services:
     container_name: scanner_fastapi
     ports:
       - "8081:8081"
+    environment:
+      # FastAPI calls Laravel back for extraction status and learned patterns.
+      # Laravel is not a service in this stack, so reach it on the host.
+      - LARAVEL_URL=http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - .:/app
     restart: unless-stopped
+    # Port stays 8081 here; only the desktop build moved to 8091.
     command: bash -c "cd /app/src && uvicorn fastapi_app:app --host 0.0.0.0 --port 8081"
 
 volumes:

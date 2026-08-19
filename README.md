@@ -4,11 +4,53 @@ Proyek ini adalah sistem untuk mengekstrak dan memproses informasi pricelist oto
 1. **Frontend & Utama (Laravel & Vue.js)**: Menyediakan interface untuk upload, menampilkan data, dashboard, chat AI, dsb.
 2. **Backend API (FastAPI - Python)**: Bertugas memproses gambar/file ZIP yang diunggah dan menghubungi API Gemini untuk ekstraksi data pricelist.
 
-Buku panduan ini menjelaskan cara menjalankan aplikasi ini menggunakan **Docker Compose (Disarankan)** atau secara **Manual (Local Development)**.
+Produk utamanya sekarang adalah **aplikasi desktop Windows (.exe)** — lihat bagian di bawah ini.
+Cara-cara lain (Docker Compose / Manual / Hybrid) tetap ada untuk **deployment di server**
+atau untuk pengembangan.
 
 ---
 
-## 1. Menjalankan dengan Docker Compose (Disarankan)
+## Aplikasi Desktop (Windows .exe) — Cara Utama
+
+Aplikasi dibungkus dengan **NativePHP + Electron** sehingga pengguna akhir cukup memasang
+satu installer, tanpa perlu Docker, PostgreSQL, atau menjalankan terminal apa pun.
+Database memakai **SQLite** (dibuat & dimigrasi otomatis saat pertama kali dijalankan),
+dan FastAPI dijalankan sendiri oleh aplikasi sebagai proses anak pada port **8091**.
+
+### Persyaratan
+- **Python 3.10+** harus terpasang dan ada di `PATH` (mesin AI Gemini berjalan di Python).
+  Semua kebutuhan lain sudah ikut di dalam installer.
+- Untuk *membangun* installer: PHP 8.4+, Composer, dan Node.js 22+.
+  Di mesin ini gunakan PHP bawaan Laragon: `D:\laragon\bin\php\php-8.4.23-Win32-vs16-x64`.
+
+### Menjalankan saat pengembangan
+```bash
+cd scanner-app
+composer native:dev
+```
+
+### Membangun installer .exe
+```bash
+cd scanner-app
+npm run build            # build aset frontend dulu
+php artisan native:build
+```
+Hasilnya berupa installer Windows di folder `dist/`.
+
+### Konfigurasi yang relevan
+| Variabel | Default | Keterangan |
+|---|---|---|
+| `NATIVEPHP_PYTHON_PATH` | `python` | Perintah/lokasi interpreter Python |
+| `NATIVEPHP_FASTAPI_PORT` | `8091` | Port mesin AI (FastAPI) |
+| `FASTAPI_URL` | `http://127.0.0.1:8091` | Alamat FastAPI yang dipanggil Laravel |
+| `LARAVEL_URL` | `http://127.0.0.1:8000` | Alamat Laravel yang dipanggil balik oleh Python |
+
+> Tidak ada layar login. Aplikasi ini dipakai satu pengguna secara lokal, sehingga
+> sebuah akun lokal dibuat dan dimasuki otomatis di setiap request.
+
+---
+
+## 1. Menjalankan dengan Docker Compose (untuk server)
 
 Cara paling mudah dan cepat untuk menjalankan seluruh sistem (Database, Laravel, Worker, dan FastAPI) secara bersamaan.
 
@@ -67,9 +109,9 @@ Jika Anda ingin menjalankan aplikasi secara lokal tanpa Docker, ikuti langkah-la
    
    # Masuk ke folder src dan jalankan server FastAPI
    cd src
-   uvicorn fastapi_app:app --host 127.0.0.1 --port 8001
+   uvicorn fastapi_app:app --host 127.0.0.1 --port 8091
    ```
-*(Catatan: Anda bisa menyesuaikan port ke `8081` jika ingin menyamakan dengan docker-compose, namun pastikan `FASTAPI_URL` di Laravel `.env` disesuaikan)*.
+*(Catatan: `8091` adalah default sekarang. Menjalankan `python fastapi_app.py` langsung juga memakai port yang sama, dan bisa diubah lewat `NATIVEPHP_FASTAPI_PORT`. Port apa pun yang dipakai, pastikan `FASTAPI_URL` di Laravel `.env` ikut disesuaikan)*.
 
 ### B. Setup Laravel & Vue (PHP & Node)
 1. Buka terminal baru dan jalankan setup Laravel:
@@ -146,16 +188,17 @@ Kita menjalankan database, queue worker, dan FastAPI (Python) di dalam Docker, t
 
 ---
 
-## Kredensial Login Default
+## Autentikasi
 
-Setelah Anda menjalankan seeder database (`php artisan migrate --seed` atau `php artisan db:seed`), Anda bisa login menggunakan akun admin default:
-- **Email**: `test@example.com`
-- **Password**: `password`
+Layar login sudah **dihapus**. Aplikasi ini dipakai satu pengguna secara lokal, sehingga
+middleware `AutoAuthenticateDesktop` membuat dan memasukkan akun lokal
+(`local@desktop.app`) secara otomatis pada setiap request.
 
 ---
 
 ## Troubleshooting
 
-- **Error CORS atau FastAPI tidak merespons**: Pastikan `FASTAPI_URL` pada Laravel `.env` sudah benar dan sesuai dengan port FastAPI yang berjalan (contoh `8001` atau `8081`).
-- **Gagal mengirim status webhook ke Laravel**: Jika aplikasi berjalan pada custom port (seperti `8002`), pastikan baris request di `fastapi_app.py` mengarah ke port tersebut (`http://127.0.0.1:8002/api/scanner/...`).
+- **Error CORS atau FastAPI tidak merespons**: Pastikan `FASTAPI_URL` pada Laravel `.env` sesuai dengan port FastAPI yang berjalan (desktop: `8091`, Docker: `8081`).
+- **Gagal mengirim status webhook ke Laravel**: Set `LARAVEL_URL` ke alamat Laravel yang sebenarnya. Alamat ini **tidak lagi di-hardcode** di `fastapi_app.py`, jadi tidak perlu mengedit kode Python. Pada mode desktop, `ProcessManager` mengisinya otomatis.
+- **Aplikasi desktop tidak menemukan Python**: Set `NATIVEPHP_PYTHON_PATH` ke lokasi lengkap `python.exe`.
 - **Queue/Background Task macet**: Pastikan worker Laravel (`php artisan queue:work` atau container `scanner_queue_worker`) aktif karena sistem ini mengandalkan proses background untuk memproses gambar yang besar.
