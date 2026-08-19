@@ -25,6 +25,12 @@ FASTAPI_PORT = int(os.getenv("NATIVEPHP_FASTAPI_PORT", os.getenv("FASTAPI_PORT",
 # Docker runs it under a different host, so this must not be hardcoded.
 LARAVEL_URL = os.getenv("LARAVEL_URL", "http://127.0.0.1:8000").rstrip("/")
 
+
+@app.get("/api/health")
+async def health():
+    """Cheap liveness probe. The desktop app polls this to show engine status."""
+    return {"status": "ok", "port": FASTAPI_PORT}
+
 @app.post("/api/extract")
 async def extract_data(
     files: List[UploadFile] = File(...),

@@ -3,6 +3,7 @@
 use App\Http\Controllers\ApiKeyController;
 use App\Http\Controllers\ChatController;
 use App\Http\Controllers\ScannerController;
+use App\Http\Controllers\SystemController;
 use Illuminate\Support\Facades\Route;
 
 // Desktop app: there is no landing page or login flow to show. The
@@ -47,6 +48,10 @@ Route::get('/api/learned-patterns', function () {
                     ->get(['provider', 'rule_text']);
     return response()->json(['status' => 'success', 'data' => $patterns]);
 })->name('api.learned-patterns');
+
+// Desktop background services: engine status + restart
+Route::get('/api/system/health', [SystemController::class, 'health'])->name('system.health');
+Route::post('/api/system/restart', [SystemController::class, 'restart'])->name('system.restart');
 
 // API Key management
 Route::get('/api/keys', [ApiKeyController::class, 'index'])->name('apikeys.index');

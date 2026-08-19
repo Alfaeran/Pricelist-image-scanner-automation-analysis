@@ -2334,11 +2334,43 @@ const pollStatus = () => {
   }
 };
 
+// ── Status mesin AI (desktop) ────────────────────────────────────────────
+// Aplikasi desktop menjalankan FastAPI sebagai proses anak. Kalau mesin itu
+// mati, semua ekstraksi gagal tanpa penjelasan - jadi tampilkan statusnya.
+const systemHealth = ref(null);
+const restartingEngine = ref(false);
+let healthTimer = null;
+
+const fetchHealth = async () => {
+  try {
+    const { data } = await axios.get("/api/system/health");
+    systemHealth.value = data;
+  } catch (e) {
+    systemHealth.value = null;
+  }
+};
+
+const restartEngine = async () => {
+  if (restartingEngine.value) return;
+  restartingEngine.value = true;
+  try {
+    const { data } = await axios.post("/api/system/restart", { process: "fastapi" });
+    showNotification("success", data.message);
+  } catch (e) {
+    showError(e, "Gagal me-restart mesin AI.");
+  } finally {
+    restartingEngine.value = false;
+    fetchHealth();
+  }
+};
+
 onMounted(() => {
   scrollToBottom();
   fetchKeys();
   pollStatus();
   fetchTrendData();
+  fetchHealth();
+  healthTimer = setInterval(fetchHealth, 15000);
 
   // Global button micro-animation
   document.addEventListener('mousedown', (e) => {
@@ -2363,6 +2395,7 @@ watch(trendFiles, () => {
 }, { deep: true });
 onUnmounted(() => {
   clearTimeout(pollTimer);
+  clearInterval(healthTimer);
 });
 </script>
 
@@ -2623,6 +2656,35 @@ onUnmounted(() => {
               </svg>
             </button>
           </div>
+        </div>
+      </div>
+
+      <!-- Status mesin AI (FastAPI) + versi aplikasi -->
+      <div class="px-4 py-3 border-t border-white/10 bg-primary space-y-1.5">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2 min-w-0">
+            <span
+              class="w-2 h-2 rounded-full shrink-0"
+              :class="systemHealth?.fastapi?.running ? 'bg-emerald-400' : 'bg-rose-400 animate-pulse'"
+            ></span>
+            <span
+              class="text-xs text-white/70 truncate"
+              :title="systemHealth?.fastapi?.detail ?? 'Memeriksa status mesin AI...'"
+            >
+              Mesin AI: {{ systemHealth?.fastapi?.running ? "Aktif" : "Mati" }}
+            </span>
+          </div>
+          <button
+            @click="restartEngine"
+            :disabled="restartingEngine"
+            title="Restart mesin AI (FastAPI)"
+            class="text-[11px] px-2 py-1 rounded bg-white/10 hover:bg-white/20 text-white/80 hover:text-white transition disabled:opacity-50 disabled:cursor-not-allowed shrink-0"
+          >
+            {{ restartingEngine ? "..." : "Restart" }}
+          </button>
+        </div>
+        <div v-if="systemHealth?.version" class="text-[11px] text-white/40">
+          Versi {{ systemHealth.version }}
         </div>
       </div>
 
