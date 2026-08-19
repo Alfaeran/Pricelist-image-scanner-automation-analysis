@@ -119,7 +119,7 @@ class ProcessWhatsAppImageJob implements ShouldQueue
 
             $response = Http::timeout(300)
                 ->attach('files', fopen($fullPath, 'r'), $filename)
-                ->post(env('FASTAPI_URL', 'http://127.0.0.1:8081') . '/api/extract', [
+                ->post(env('FASTAPI_URL', 'http://127.0.0.1:8091') . '/api/extract', [
                     'api_keys' => $apiKeysString,
                     'model' => $modelsString,
                     'prompt' => $this->caption,

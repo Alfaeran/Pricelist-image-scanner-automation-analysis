@@ -121,8 +121,15 @@ class ProcessManager
             '--port', (string) $port,
         ];
 
-        $process = new Process($command);
-        $process->setWorkingDirectory($srcDir);
+        // The Python side calls Laravel back (extraction status pushes, learned-pattern
+        // lookups). Desktop does not serve Laravel on the default port, so it has to be
+        // told where to reach us rather than assuming 127.0.0.1:8000.
+        $env = [
+            'NATIVEPHP_FASTAPI_PORT' => (string) $port,
+            'LARAVEL_URL' => rtrim((string) config('app.url'), '/'),
+        ];
+
+        $process = new Process($command, $srcDir, $env);
         $process->setTimeout(null); // Run indefinitely
         $process->start(function ($type, $buffer) {
             if ($type === Process::ERR) {

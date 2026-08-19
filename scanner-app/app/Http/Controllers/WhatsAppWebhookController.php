@@ -272,7 +272,7 @@ class WhatsAppWebhookController extends Controller
                 'category' => $p->category,
             ])->toArray();
 
-            $response = Http::timeout(60)->post(env('FASTAPI_URL', 'http://127.0.0.1:8081') . '/api/insights', [
+            $response = Http::timeout(60)->post(env('FASTAPI_URL', 'http://127.0.0.1:8091') . '/api/insights', [
                 'packages' => $payload
             ]);
 
@@ -555,7 +555,7 @@ class WhatsAppWebhookController extends Controller
 
             // Send to FastAPI chat endpoint
             $response = Http::timeout(60)->post(
-                env('FASTAPI_URL', 'http://127.0.0.1:8081') . '/api/chat',
+                env('FASTAPI_URL', 'http://127.0.0.1:8091') . '/api/chat',
                 [
                     'message' => $question,
                     'packages' => $payload,

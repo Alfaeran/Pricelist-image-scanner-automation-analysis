@@ -14,9 +14,14 @@ from __future__ import annotations
 import io
 import json
 import math
+import os
 import time
 import zipfile
 from pathlib import Path
+
+# Laravel's base URL. Desktop and Docker each serve it from a different
+# host/port, so this must not be hardcoded.
+LARAVEL_URL = os.getenv("LARAVEL_URL", "http://127.0.0.1:8000").rstrip("/")
 
 import cv2
 import numpy as np
@@ -286,7 +291,7 @@ def extract_packages_gemini(
     # Fetch learned patterns from Laravel API
     learned_patterns_text = ""
     try:
-        resp = requests.get("http://127.0.0.1:8000/api/learned-patterns", timeout=3)
+        resp = requests.get(f"{LARAVEL_URL}/api/learned-patterns", timeout=3)
         if resp.status_code == 200:
             patterns = resp.json().get('data', [])
             if patterns:

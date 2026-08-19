@@ -4,6 +4,7 @@ import uvicorn
 from typing import List
 import json
 import logging
+import os
 import time
 
 # Import existing pipeline functions
@@ -15,6 +16,14 @@ from google import genai
 
 app = FastAPI(title="Pricelist Scanner API")
 logging.basicConfig(level=logging.INFO)
+
+# Where this service listens. The desktop app passes NATIVEPHP_FASTAPI_PORT so the
+# bundled engine does not collide with a dev server or another service on 8081.
+FASTAPI_PORT = int(os.getenv("NATIVEPHP_FASTAPI_PORT", os.getenv("FASTAPI_PORT", "8091")))
+
+# Where to call Laravel back. Desktop runs Laravel on a port NativePHP picks, and
+# Docker runs it under a different host, so this must not be hardcoded.
+LARAVEL_URL = os.getenv("LARAVEL_URL", "http://127.0.0.1:8000").rstrip("/")
 
 @app.post("/api/extract")
 async def extract_data(
@@ -71,7 +80,7 @@ async def extract_data(
             elif pricelist_id is not None:
                 try:
                     requests.post(
-                        f"http://127.0.0.1:8000/api/scanner/{pricelist_id}/status",
+                        f"{LARAVEL_URL}/api/scanner/{pricelist_id}/status",
                         json={"status": msg},
                         timeout=3
                     )
@@ -454,4 +463,4 @@ async def check_sim_age(req: SimAgeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8081)
+    uvicorn.run(app, host="127.0.0.1", port=FASTAPI_PORT)
