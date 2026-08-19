@@ -81,4 +81,18 @@ return [
         'driver' => 'sqlite',
         'path' => null, // null = NativePHP default location
     ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Python / FastAPI Configuration
+    |--------------------------------------------------------------------------
+    |
+    | These settings control how the embedded FastAPI subprocess is started.
+    | The ProcessManager reads these values to spawn the AI pipeline.
+    |
+    */
+
+    'python_path' => env('NATIVEPHP_PYTHON_PATH', 'python'),
+
+    'fastapi_port' => (int) env('NATIVEPHP_FASTAPI_PORT', 8091),
 ];
