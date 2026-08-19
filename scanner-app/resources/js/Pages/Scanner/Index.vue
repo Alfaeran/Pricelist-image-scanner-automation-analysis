@@ -1,5 +1,4 @@
 <script setup>
-import AuthenticatedLayout from "@/Layouts/AuthenticatedLayout.vue";
 import { Head, useForm, router } from "@inertiajs/vue3";
 import { ref, onMounted, onUnmounted, nextTick, computed, watch } from "vue";
 import axios from "axios";
