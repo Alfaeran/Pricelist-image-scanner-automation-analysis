@@ -1,0 +1,46 @@
+name: Bug Report (Developer)
+description: Masalah pada kode, build, atau deployment
+labels: ["bug", "dev"]
+body:
+  - type: dropdown
+    id: lingkungan
+    attributes:
+      label: Lingkungan
+      options:
+        - Desktop (NativePHP/Electron)
+        - Docker Compose
+        - Manual / local dev
+        - Build installer
+    validations:
+      required: true
+  - type: textarea
+    id: reproduksi
+    attributes:
+      label: Langkah reproduksi
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: aktual
+    attributes:
+      label: Yang terjadi vs yang diharapkan
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log / stack trace
+      description: "Jangan sertakan isi .env atau API key."
+      render: shell
+  - type: textarea
+    id: versi
+    attributes:
+      label: Versi
+      placeholder: |
+        PHP:
+        Node:
+        Python:
+        OS:

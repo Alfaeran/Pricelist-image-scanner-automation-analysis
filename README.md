@@ -4,9 +4,58 @@ Proyek ini adalah sistem untuk mengekstrak dan memproses informasi pricelist oto
 1. **Frontend & Utama (Laravel & Vue.js)**: Menyediakan interface untuk upload, menampilkan data, dashboard, chat AI, dsb.
 2. **Backend API (FastAPI - Python)**: Bertugas memproses gambar/file ZIP yang diunggah dan menghubungi API Gemini untuk ekstraksi data pricelist.
 
-Produk utamanya sekarang adalah **aplikasi desktop Windows (.exe)** — lihat bagian di bawah ini.
-Cara-cara lain (Docker Compose / Manual / Hybrid) tetap ada untuk **deployment di server**
-atau untuk pengembangan.
+Produk utamanya adalah **aplikasi desktop Windows (.exe)**.
+
+## Anda pengguna, bukan developer?
+
+➡️ **[Panduan Download & Install (DOWNLOAD.md)](DOWNLOAD.md)**
+
+Cukup unduh satu installer dari
+[halaman Releases](https://github.com/Alfaeran/Pricelist-image-scanner-automation-analysis/releases).
+Tidak perlu Docker, PHP, Node, atau terminal.
+Ada kendala? [Buka issue](https://github.com/Alfaeran/Pricelist-image-scanner-automation-analysis/issues).
+
+Sisa README ini ditujukan untuk **developer**: cara membangun installer,
+menjalankan versi server (Docker/manual), dan konfigurasi teknis.
+
+---
+
+## Alur Pemakaian Aplikasi
+
+Setelah aplikasi terpasang, alurnya seperti ini:
+
+```
+  [1] Pilih sumber data          [2] Sistem memproses         [3] Analisis
+  ┌────────────────┐        ┌────────────────┐       ┌────────────────┐
+  │ Scan Gambar     │        │ AI membaca     │       │ Dashboard      │
+  │ Upload CSV      │  ──▶   │ harga, kuota,  ──▶  │ Market Trend   │
+  │ WhatsApp Bot    │        │ masa aktif     │       │ Chat AI        │
+  └────────────────┘        └────────────────┘       └────────────────┘
+```
+
+**1. Masukkan data pricelist** — lewat salah satu dari tiga tab:
+
+| Tab | Untuk apa |
+|---|---|
+| **Scan Gambar** | Foto/screenshot pricelist. Bisa satu gambar atau `.zip` berisi banyak gambar. |
+| **Upload CSV** | Data pricelist yang sudah rapi dalam bentuk tabel. Kolom lokasi ikut tersimpan. |
+| **WhatsApp Bot (AI)** | Kirim foto pricelist lewat WhatsApp, bot yang memasukkannya. |
+
+**2. Tunggu proses ekstraksi** — AI membaca gambar dan mengisi provider, nama paket,
+harga, kuota (GB), masa aktif, lalu menghitung *yield* (harga per GB). Progres tampil
+di layar; gambar besar diproses di latar belakang.
+
+**3. Baca hasilnya:**
+
+- **Dashboard** — tabel seluruh paket, bisa difilter per provider, kategori, dan lokasi
+  (circle / region / branch).
+- **Market Trend** — grafik pergerakan harga dan yield antar waktu dan antar provider.
+- **Chat AI** — tanya dengan bahasa sehari-hari, misalnya
+  *"brand mana yang yield-nya paling bagus?"*, dijawab berdasarkan data yang sudah masuk.
+
+Bot WhatsApp menjawab pertanyaan yang sama lewat chat. Nomor yang boleh memakainya
+diatur di tab **WhatsApp Bot (AI)** → **Nomor yang Boleh Chat Bot**
+(lihat [DOWNLOAD.md](DOWNLOAD.md#3-pengaturan-awal)).
 
 ---
 
@@ -45,10 +94,16 @@ composer native:dev
 ### Membangun installer .exe
 ```bash
 cd scanner-app
-npm run build            # build aset frontend dulu
-php artisan native:build
+npm run build                                    # build aset frontend dulu
+php artisan native:build win x64 --no-interaction
 ```
-Hasilnya berupa installer Windows di folder `dist/`.
+Hasilnya berupa installer Windows di `nativephp/electron/dist/`.
+
+> Sertakan `win x64`. Tanpa argumen itu perintah menunggu jawaban interaktif, dan
+> kalau prosesnya ditinggalkan ia tetap hidup sambil mengunci `node_modules` serta
+> folder `dist` — build berikutnya gagal dengan `EBUSY` atau
+> `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE`. Kalau itu terjadi, hentikan proses
+> `native:build` yang tersisa lalu hapus `nativephp/electron/dist`.
 
 ### Konfigurasi yang relevan
 | Variabel | Default | Keterangan |

@@ -1,0 +1,53 @@
+name: Laporan Masalah (Pengguna Aplikasi)
+description: Aplikasi error, tidak mau jalan, atau hasilnya salah
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Terima kasih sudah melaporkan. Isi sebisanya — tidak harus lengkap semua.
+  - type: input
+    id: versi
+    attributes:
+      label: Versi aplikasi
+      description: Ada di installer yang Anda unduh, misalnya "Setup 1.0.0"
+      placeholder: "1.0.0"
+  - type: dropdown
+    id: bagian
+    attributes:
+      label: Bagian mana yang bermasalah?
+      options:
+        - Install / membuka aplikasi
+        - Scan Gambar
+        - Upload CSV
+        - WhatsApp Bot
+        - Dashboard / Market Trend
+        - Chat AI
+        - Lainnya
+    validations:
+      required: true
+  - type: textarea
+    id: kejadian
+    attributes:
+      label: Apa yang terjadi?
+      description: Ceritakan langkahnya, lalu apa yang muncul di layar
+      placeholder: |
+        1. Buka tab Scan Gambar
+        2. Upload foto pricelist
+        3. Muncul tulisan "..." dan berhenti di situ
+    validations:
+      required: true
+  - type: textarea
+    id: harapan
+    attributes:
+      label: Seharusnya bagaimana?
+  - type: textarea
+    id: gambar
+    attributes:
+      label: Screenshot
+      description: Tarik gambar ke kotak ini kalau ada. Sensor dulu data yang tidak ingin dipublikasikan.
+  - type: input
+    id: windows
+    attributes:
+      label: Versi Windows
+      placeholder: "Windows 11"

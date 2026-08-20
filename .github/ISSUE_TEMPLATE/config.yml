@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Panduan Install & Pemakaian
+    url: https://github.com/Alfaeran/Pricelist-image-scanner-automation-analysis/blob/main/DOWNLOAD.md
+    about: Cara download, install, dan pengaturan awal aplikasi
