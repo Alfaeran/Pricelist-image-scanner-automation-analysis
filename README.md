@@ -8,15 +8,71 @@ Produk utamanya adalah **aplikasi desktop Windows (.exe)**.
 
 ## Anda pengguna, bukan developer?
 
-➡️ **[Panduan Download & Install (DOWNLOAD.md)](DOWNLOAD.md)**
+Cukup unduh satu installer. Tidak perlu Docker, PHP, Node, Python, atau terminal —
+semuanya sudah ada di dalam installer.
 
-Cukup unduh satu installer dari
-[halaman Releases](https://github.com/Alfaeran/Pricelist-image-scanner-automation-analysis/releases).
-Tidak perlu Docker, PHP, Node, atau terminal.
-Ada kendala? [Buka issue](https://github.com/Alfaeran/Pricelist-image-scanner-automation-analysis/issues).
+### 1. Download
+
+1. Buka **[halaman Releases](https://github.com/Alfaeran/Pricelist-image-scanner-automation-analysis/releases)**.
+2. Pilih rilis paling atas (`Latest`).
+3. Di bagian **Assets**, klik file berakhiran `.exe`.
+
+> Butuh Windows 10 atau 11, 64-bit. Ukuran unduhan sekitar 300 MB.
+
+### 2. Install
+
+1. Klik dua kali file `.exe` yang sudah diunduh.
+2. Windows menampilkan **"Windows protected your PC"**. Ini normal untuk aplikasi
+   yang belum dibeli sertifikat penandatanganannya.
+   Klik **More info** → **Run anyway**.
+3. Ikuti langkah installer sampai selesai. Aplikasi terbuka otomatis, dan pintasan
+   **Pricelist Scanner** ada di Start Menu.
+
+Saat pertama kali dibuka, aplikasi menyiapkan database-nya sendiri. Proses ini
+memakan beberapa detik — biarkan jendela terbuka.
+
+### 3. Pengaturan awal
+
+**Nomor yang boleh chat bot WhatsApp.** Buka tab **WhatsApp Bot (AI)**, lalu di panel
+**Nomor yang Boleh Chat Bot** isi nomor yang diizinkan, pisahkan dengan koma. Format
+`08xx` maupun `628xx` sama-sama diterima:
+
+```
+081234567890, 6285842041644
+```
+
+Klik **Simpan**. Kosongkan kolom itu kalau ingin semua nomor bisa memakai bot. Badge
+di sebelah kanan menunjukkan status: *Whitelist aktif* atau *Semua nomor diizinkan*.
+
+**Menyambungkan WhatsApp.** Kalau driver yang aktif adalah **Evolution**, panel QR Code
+muncul di tab yang sama. Buka WhatsApp di HP → **Setelan** → **Perangkat Tertaut** →
+pindai QR Code yang tampil di aplikasi.
+
+### 4. Update ke versi baru
+
+Download `.exe` terbaru dari halaman Releases dan jalankan seperti biasa. Installer
+menimpa versi lama. **Data dan pengaturan tidak hilang** — database tersimpan terpisah
+dari aplikasi.
+
+### 5. Kalau ada masalah
+
+| Gejala | Yang perlu dilakukan |
+|---|---|
+| Jendela putih / kosong saat dibuka | Tutup, buka lagi. Kalau tetap, restart Windows. |
+| SmartScreen tidak memberi opsi Run anyway | Klik kanan file `.exe` → **Properties** → centang **Unblock** → **OK**. |
+| Bot tidak membalas | Cek nomor pengirim sudah ada di daftar **Nomor yang Boleh Chat Bot**. |
+| Antivirus memblokir | Tambahkan folder instalasi ke pengecualian antivirus. |
+
+Kendala lain? [Buka issue](https://github.com/Alfaeran/Pricelist-image-scanner-automation-analysis/issues).
 
 Sisa README ini ditujukan untuk **developer**: cara membangun installer,
 menjalankan versi server (Docker/manual), dan konfigurasi teknis.
+
+> **Catatan developer.** Repo publik ini hanya berisi kode aplikasi. Berkas
+> khusus developer — `Dockerfile`, `docker-compose.yml`, `requirements.txt`,
+> dan catatan internal — sengaja tidak ikut di-commit karena repo ini
+> ditujukan untuk pengguna aplikasi, bukan kontributor. Berkas-berkas itu ada
+> di working copy pemilik repo.
 
 ---
 
@@ -55,7 +111,7 @@ di layar; gambar besar diproses di latar belakang.
 
 Bot WhatsApp menjawab pertanyaan yang sama lewat chat. Nomor yang boleh memakainya
 diatur di tab **WhatsApp Bot (AI)** → **Nomor yang Boleh Chat Bot**
-(lihat [DOWNLOAD.md](DOWNLOAD.md#3-pengaturan-awal)).
+(lihat [Pengaturan awal](#3-pengaturan-awal)).
 
 ---
 

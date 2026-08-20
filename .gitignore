@@ -28,3 +28,14 @@ data/chatbot_test_results.json
 
 # Cygwin/Git-Bash crash dumps
 *.stackdump
+
+# Developer-only files. This is a public repo for end users; the app ships as
+# an installer from Releases, so build recipes and handoff notes are noise here.
+# Kept locally - see README for the build command.
+/AI_CONTEXT.md
+/DOWNLOAD.md
+/Dockerfile
+/HANDOFF_DESKTOP_MIGRATION.md
+/docker-compose.yml
+/package-lock.json
+/requirements.txt
