@@ -50,6 +50,11 @@ return [
         'driver' => env('WHATSAPP_DRIVER', 'evolution'),
         'enabled' => env('WHATSAPP_ENABLED', false),
 
+        // Fallback whitelist. The live value is WhatsAppSetting::allowedNumbers(),
+        // which reads the DB first; this only seeds a fresh install. Comma
+        // separated, '*' (or empty) allows every sender.
+        'allowed_numbers' => env('WHATSAPP_ALLOWED_NUMBERS'),
+
         // Meta WhatsApp Cloud API (Official)
         'meta' => [
             'token' => env('WHATSAPP_META_TOKEN', ''),

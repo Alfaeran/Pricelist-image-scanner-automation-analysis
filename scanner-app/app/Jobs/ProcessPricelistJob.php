@@ -156,15 +156,30 @@ class ProcessPricelistJob implements ShouldQueue
 
                         $baselineData = $this->getBaselineData();
                         
+                        // Keyed by the name the user uploaded, not the stored name:
+                        // storeAs() prefixes a uniqid, so basename($path) never
+                        // equals the image_filename the pipeline reports back.
                         $filenameToLocation = [];
+                        $soleLocation = null;
                         if ($this->locations && is_array($this->locations)) {
                             foreach ($this->filePaths as $idx => $path) {
-                                $filename = basename($path);
-                                $filenameToLocation[$filename] = $this->locations[$idx] ?? null;
+                                $loc = $this->locations[$idx] ?? null;
+                                $stored = basename($path);
+                                $filenameToLocation[$stored] = $loc;
+                                // Strip the "<uniqid>_" storeAs() prefix.
+                                $original = preg_replace('/^[0-9a-f]{13,}_/', '', $stored);
+                                $filenameToLocation[$original] = $loc;
+                            }
+                            // A ZIP is one upload with one location, but the pipeline
+                            // reports each image inside it under its own name - none of
+                            // which are in the map above. One location covers them all.
+                            $nonNull = array_values(array_filter($this->locations));
+                            if (count($nonNull) === 1) {
+                                $soleLocation = $nonNull[0];
                             }
                         }
 
-                        DB::transaction(function () use ($data, $pricelist, $baselineData, $filenameToLocation) {
+                        DB::transaction(function () use ($data, $pricelist, $baselineData, $filenameToLocation, $soleLocation) {
                             if (!$this->isAppend) {
                                 $pricelist->packages()->delete();
                             }
@@ -191,6 +206,10 @@ class ProcessPricelistJob implements ShouldQueue
                                 elseif ($providerStr == '3ID') $providerStr = '3';
                                 elseif ($providerStr == 'BYU') $providerStr = 'BY.U';
 
+                                // $baselineKey was never assigned on this path, so the
+                                // exact-match lookup silently missed and every scanned
+                                // row fell through to "new product".
+                                $baselineKey = $providerStr . '_' . $gb . '_' . $days;
                                 $fallbackKey = $providerStr . '_' . $gb;
                                 $isNewProduct = false;
                                 $isPriceChanged = false;
@@ -217,15 +236,15 @@ class ProcessPricelistJob implements ShouldQueue
                                     }
                                 }
                                 $imageFilename = $pkg['image_filename'] ?? null;
-                                $branch = null;
-                                if ($imageFilename && isset($filenameToLocation[$imageFilename])) {
-                                    $branch = $filenameToLocation[$imageFilename];
-                                }
-                                $locDetails = $this->getLocationDetails($branch);
+                                $branch = $filenameToLocation[$imageFilename] ?? $soleLocation;
+                                $locDetails = ExtractedPackage::locationDetails($branch);
 
                                 ExtractedPackage::create([
                                     'pricelist_id' => $pricelist->id,
-                                    'provider' => $pkg['provider'] ?? 'UNKNOWN',
+                                    // The normalized string, not the raw OCR one: storing
+                                    // 'TSEL' here while baseline matching used 'TELKOMSEL'
+                                    // split the same carrier across two trend series.
+                                    'provider' => $providerStr,
                                     'package_name' => $pkg['package_name'] ?? null,
                                     'price' => $price,
                                     'gb' => $gb,
@@ -431,19 +450,37 @@ class ProcessPricelistJob implements ShouldQueue
             $gb = (float) preg_replace('/[^\d\.]/', '', $gbStr);
             $days = (int) preg_replace('/[^\d]/', '', $row[5] ?? '');
             
+            // Same exact-then-fallback lookup the image path uses.
+            // getBaselineData() returns exact/fallback/providers buckets, so
+            // indexing it flat here marked every row as a new product.
             $baselineKey = $provider . '_' . $gb . '_' . $days;
+            $fallbackKey = $provider . '_' . $gb;
             $isNewProduct = false;
             $isPriceChanged = false;
+            $isDaysChanged = false;
             $baselinePrice = null;
+            $baselineDays = null;
 
-            if (isset($baselineData[$baselineKey])) {
-                $baselinePrice = $baselineData[$baselineKey]['price'];
-                if ($price !== $baselinePrice) {
-                    $isPriceChanged = true;
+            if (in_array($provider, $baselineData['providers'])) {
+                if (isset($baselineData['exact'][$baselineKey])) {
+                    $baselinePrice = $baselineData['exact'][$baselineKey]['price'];
+                    if ($price !== $baselinePrice) {
+                        $isPriceChanged = true;
+                    }
+                } elseif (isset($baselineData['fallback'][$fallbackKey])) {
+                    $fallbackMatch = $baselineData['fallback'][$fallbackKey][0];
+                    $isDaysChanged = true;
+                    $baselinePrice = $fallbackMatch['price'];
+                    $baselineDays = $fallbackMatch['days'];
+                    if ($price !== $baselinePrice) {
+                        $isPriceChanged = true;
+                    }
+                } else {
+                    $isNewProduct = true;
                 }
-            } else {
-                $isNewProduct = true;
             }
+
+            $locDetails = ExtractedPackage::locationDetails($location);
 
             \App\Models\ExtractedPackage::create([
                 'pricelist_id' => $pricelist->id,
@@ -456,11 +493,16 @@ class ProcessPricelistJob implements ShouldQueue
                 'is_anomaly' => ($price <= 0 || $gb <= 0 || (app(\App\Http\Controllers\ScannerController::class)->calculateYield("Paket " . $provider, $gb, $days, $price)) > 50000),
                 'is_new_product' => $isNewProduct,
                 'is_price_changed' => $isPriceChanged,
+                'is_days_changed' => $isDaysChanged,
                 'baseline_price' => $baselinePrice,
+                'baseline_days' => $baselineDays,
                 'category' => $this->categorize($days, $price),
                 'product_type' => 'Data',
                 'image_timestamp' => $this->manualTimestamp,
                 'image_location' => $location,
+                'circle' => $locDetails['circle'],
+                'region' => $locDetails['region'],
+                'branch' => $locDetails['branch'],
             ]);
         }
     }
@@ -508,26 +550,4 @@ class ProcessPricelistJob implements ShouldQueue
         return $baselineData;
     }
 
-    private function getLocationDetails(?string $branch): array
-    {
-        if (!$branch) {
-            return ['circle' => null, 'region' => null, 'branch' => null];
-        }
-
-        $centralJava = ['Semarang', 'Surakarta', 'Magelang', 'Salatiga', 'Tegal', 'Pekalongan', 'Cilacap', 'Banyumas', 'Purbalingga', 'Banjarnegara', 'Kebumen', 'Purworejo', 'Wonosobo', 'Boyolali', 'Klaten', 'Sukoharjo', 'Wonogiri', 'Karanganyar', 'Sragen', 'Grobogan', 'Blora', 'Rembang', 'Pati', 'Kudus', 'Jepara', 'Demak', 'Temanggung', 'Kendal', 'Batang', 'Pemalang', 'Brebes'];
-        $eastJava = ['Surabaya', 'Malang', 'Kediri', 'Madiun', 'Mojokerto', 'Pasuruan', 'Probolinggo', 'Batu', 'Blitar', 'Bangkalan', 'Banyuwangi', 'Bojonegoro', 'Bondowoso', 'Gresik', 'Jember', 'Jombang', 'Lamongan', 'Lumajang', 'Magetan', 'Nganjuk', 'Ngawi', 'Pacitan', 'Pamekasan', 'Ponorogo', 'Sampang', 'Sidoarjo', 'Situbondo', 'Sumenep', 'Trenggalek', 'Tuban', 'Tulungagung'];
-        
-        $region = 'Bali Nusra';
-        if (in_array($branch, $centralJava)) {
-            $region = 'Central Java';
-        } elseif (in_array($branch, $eastJava)) {
-            $region = 'East Java';
-        }
-
-        return [
-            'circle' => 'Java Bali Nusra',
-            'region' => $region,
-            'branch' => $branch
-        ];
-    }
 }

@@ -17,6 +17,10 @@ use Tests\TestCase;
 
 class WhatsAppAndScannerSystemTest extends TestCase
 {
+    // RefreshDatabase was imported but never applied, so setUp() queried
+    // api_keys against an unmigrated :memory: database and every test errored.
+    use RefreshDatabase;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -110,7 +114,7 @@ class WhatsAppAndScannerSystemTest extends TestCase
 
         $lastLog = WhatsAppMessageLog::where('conversation_id', $conversation->id)->latest()->first();
         $this->assertNotNull($lastLog);
-        $this->assertStringContainsString('Pricelist Scanner Bot', $lastLog->message_text);
+        $this->assertStringContainsString('Pricelist Scanner Bot', $lastLog->content);
     }
 
     /** @test */
@@ -231,13 +235,13 @@ class WhatsAppAndScannerSystemTest extends TestCase
         $logs = WhatsAppMessageLog::where('conversation_id', $conversation->id)->get();
         $this->assertGreaterThanOrEqual(2, $logs->count(), 'Should log ACK message and AI answer');
 
-        $ackMsg = $logs->firstWhere('message_text', 'like', '%Pertanyaan Diterima%');
+        $ackMsg = $logs->first(fn ($l) => str_contains((string) $l->content, 'Pertanyaan Diterima'));
         $this->assertNotNull($ackMsg, 'Should send immediate ACK message');
 
         $aiMsg = $logs->last();
-        $this->assertStringContainsString('📌 *Statement:*', $aiMsg->message_text);
-        $this->assertStringContainsString('📊 *Bukti Berdasarkan Data:*', $aiMsg->message_text);
-        $this->assertStringContainsString('💡 *Insight & Rekomendasi:*', $aiMsg->message_text);
-        $this->assertStringNotContainsString('{"action":', $aiMsg->message_text, 'Should not contain raw JSON');
+        $this->assertStringContainsString('📌 *Statement:*', $aiMsg->content);
+        $this->assertStringContainsString('📊 *Bukti Berdasarkan Data:*', $aiMsg->content);
+        $this->assertStringContainsString('💡 *Insight & Rekomendasi:*', $aiMsg->content);
+        $this->assertStringNotContainsString('{"action":', $aiMsg->content, 'Should not contain raw JSON');
     }
 }

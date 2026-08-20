@@ -226,22 +226,12 @@ class EvolutionApiService implements WhatsAppServiceInterface
         $from = $this->extractPhoneNumber($remoteJid);
         if (empty($from)) return null;
 
-        // Check Whitelist Allowed Phone Numbers filter from .env (WHATSAPP_ALLOWED_NUMBERS)
-        $allowedEnv = env('WHATSAPP_ALLOWED_NUMBERS');
-        if (!empty($allowedEnv) && trim($allowedEnv) !== '*') {
-            $allowedList = array_map('trim', explode(',', $allowedEnv));
-            $allowedNumbers = array_map(function($num) {
-                $num = preg_replace('/[^0-9]/', '', $num);
-                if (str_starts_with($num, '0')) {
-                    $num = '62' . substr($num, 1);
-                }
-                return $num;
-            }, $allowedList);
-
-            if (!in_array($from, $allowedNumbers)) {
-                Log::info("Evolution API: Skipped message from non-whitelisted number: {$from}");
-                return null;
-            }
+        // Sender whitelist. Sourced from the DB (editable in the dashboard) and
+        // falling back to config. It used to call env() directly, which returns
+        // null once config is cached - silently letting every sender through.
+        if (!\App\Models\WhatsAppSetting::allows($from)) {
+            Log::info("Evolution API: Skipped message from non-whitelisted number: {$from}");
+            return null;
         }
 
         // Determine message type and content

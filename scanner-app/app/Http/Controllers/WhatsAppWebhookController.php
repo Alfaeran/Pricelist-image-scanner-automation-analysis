@@ -7,6 +7,7 @@ use App\Models\ApiKey;
 use App\Models\Pricelist;
 use App\Models\WhatsAppConversation;
 use App\Models\WhatsAppMessageLog;
+use App\Models\WhatsAppSetting;
 use App\Services\WhatsApp\WhatsAppServiceInterface;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
@@ -682,5 +683,50 @@ class WhatsAppWebhookController extends Controller
                 ->count(),
             'connection' => $this->whatsapp->getConnectionStatus(),
         ]);
+    }
+
+    /** Current sender whitelist, as the comma-separated string the UI edits. */
+    public function settings()
+    {
+        $allowed = WhatsAppSetting::allowedNumbers();
+
+        return response()->json([
+            'allowed_numbers' => in_array('*', $allowed, true) ? '' : implode(',', $allowed),
+            'allow_all' => in_array('*', $allowed, true),
+        ]);
+    }
+
+    public function updateSettings(Request $request)
+    {
+        $validated = $request->validate([
+            'allowed_numbers' => ['nullable', 'string', 'max:2000'],
+        ]);
+
+        $raw = trim($validated['allowed_numbers'] ?? '');
+
+        if ($raw === '' || $raw === '*') {
+            WhatsAppSetting::put(WhatsAppSetting::ALLOWED_NUMBERS, '*');
+
+            return $this->settings();
+        }
+
+        $numbers = [];
+        foreach (explode(',', $raw) as $candidate) {
+            $number = WhatsAppSetting::normalizeNumber($candidate);
+
+            // 62 + 9 digits is the shortest real Indonesian mobile number;
+            // anything shorter is a typo and would silently never match.
+            if (strlen($number) < 10 || strlen($number) > 15) {
+                return response()->json([
+                    'message' => "Nomor tidak valid: " . trim($candidate),
+                ], 422);
+            }
+
+            $numbers[$number] = true;
+        }
+
+        WhatsAppSetting::put(WhatsAppSetting::ALLOWED_NUMBERS, implode(',', array_keys($numbers)));
+
+        return $this->settings();
     }
 }

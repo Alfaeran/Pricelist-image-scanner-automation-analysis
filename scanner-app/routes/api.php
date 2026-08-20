@@ -48,4 +48,11 @@ Route::middleware(['web'])->prefix('whatsapp')->group(function () {
     // Messages for a conversation
     Route::get('/conversations/{conversation}/messages', [WhatsAppWebhookController::class, 'conversationMessages'])
         ->name('whatsapp.conversations.messages');
+
+    // Sender whitelist, editable from the dashboard
+    Route::get('/settings', [WhatsAppWebhookController::class, 'settings'])
+        ->name('whatsapp.settings');
+
+    Route::post('/settings', [WhatsAppWebhookController::class, 'updateSettings'])
+        ->name('whatsapp.settings.update');
 });

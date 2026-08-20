@@ -28,6 +28,7 @@ class NativeAppServiceProvider implements ProvidesPhpIni
     public function boot(): void
     {
         $this->ensureSqliteDatabase();
+        $this->ensureBaselineProducts();
         $this->startManagedProcesses();
 
         $window = (array) config('nativephp.window', []);
@@ -60,7 +61,12 @@ class NativeAppServiceProvider implements ProvidesPhpIni
      */
     protected function ensureSqliteDatabase(): void
     {
-        $dbPath = config('database.connections.sqlite.database');
+        // Not connections.sqlite: NativeServiceProvider rewrites
+        // database.default to 'nativephp' at runtime, so that is the file the
+        // app actually reads and writes. Migrating the other one leaves the
+        // real database a schema behind.
+        $connection = config('database.default');
+        $dbPath = config("database.connections.{$connection}.database");
 
         if (!$dbPath) {
             return;
@@ -104,6 +110,40 @@ class NativeAppServiceProvider implements ProvidesPhpIni
             }
         } catch (\Throwable $e) {
             Log::error('[NativeApp] Failed to migrate database: ' . $e->getMessage());
+        }
+    }
+
+    /**
+     * Seed the baseline catalogue on first run.
+     *
+     * ProcessPricelistJob compares every extracted package against
+     * baseline_products to decide "new product" and "price changed". The web
+     * app filled that table by running baseline:import-csv from a terminal;
+     * the desktop app has no terminal, so an empty table would silently mark
+     * nothing as changed. Only seeds when empty - never overwrites edits the
+     * user has made through the Baseline Products screen.
+     */
+    protected function ensureBaselineProducts(): void
+    {
+        try {
+            if (!Schema::hasTable('baseline_products')) {
+                return;
+            }
+
+            if (DB::table('baseline_products')->exists()) {
+                return;
+            }
+
+            if (!file_exists(base_path('List produk.csv'))) {
+                Log::warning('[NativeApp] baseline_products is empty and List produk.csv is missing; change detection will be inactive.');
+
+                return;
+            }
+
+            Artisan::call('baseline:import-csv');
+            Log::info('[NativeApp] Seeded baseline products: ' . trim(Artisan::output()));
+        } catch (\Throwable $e) {
+            Log::error('[NativeApp] Failed to seed baseline products: ' . $e->getMessage());
         }
     }
 

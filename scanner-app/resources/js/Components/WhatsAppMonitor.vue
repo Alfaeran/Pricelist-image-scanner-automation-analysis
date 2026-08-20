@@ -58,6 +58,42 @@ const selectConversation = async (conv) => {
   }
 };
 
+// Sender whitelist. Empty string means every number is allowed.
+const allowedNumbers = ref('');
+const allowAll = ref(true);
+const savingNumbers = ref(false);
+const numbersError = ref('');
+const numbersSaved = ref(false);
+
+const fetchSettings = async () => {
+  try {
+    const res = await axios.get('/api/whatsapp/settings');
+    allowedNumbers.value = res.data.allowed_numbers || '';
+    allowAll.value = res.data.allow_all;
+  } catch (e) {
+    console.error('Failed to load WhatsApp settings:', e);
+  }
+};
+
+const saveSettings = async () => {
+  savingNumbers.value = true;
+  numbersError.value = '';
+  numbersSaved.value = false;
+  try {
+    const res = await axios.post('/api/whatsapp/settings', {
+      allowed_numbers: allowedNumbers.value,
+    });
+    allowedNumbers.value = res.data.allowed_numbers || '';
+    allowAll.value = res.data.allow_all;
+    numbersSaved.value = true;
+    setTimeout(() => { numbersSaved.value = false; }, 2500);
+  } catch (e) {
+    numbersError.value = e.response?.data?.message || 'Gagal menyimpan nomor.';
+  } finally {
+    savingNumbers.value = false;
+  }
+};
+
 const formatDate = (isoString) => {
   if (!isoString) return '';
   const date = new Date(isoString);
@@ -67,6 +103,7 @@ const formatDate = (isoString) => {
 onMounted(() => {
   fetchStats();
   fetchConversations();
+  fetchSettings();
   autoRefreshTimer.value = setInterval(() => {
     fetchStats();
     if (selectedConversation.value) {
@@ -164,6 +201,45 @@ onUnmounted(() => {
           Muat Ulang QR Code
         </button>
       </div>
+    </div>
+
+    <!-- Sender Whitelist -->
+    <div class="my-6 p-4 sm:p-5 bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 rounded-2xl">
+      <div class="flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <h4 class="text-sm font-bold text-slate-800 dark:text-slate-100">Nomor yang Boleh Chat Bot</h4>
+          <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            Pisahkan dengan koma. Boleh format <code>08xx</code> atau <code>628xx</code>.
+            Kosongkan untuk mengizinkan semua nomor.
+          </p>
+        </div>
+        <span
+          :class="allowAll ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'"
+          class="text-[10px] font-semibold px-2.5 py-1 rounded-full border shrink-0"
+        >
+          {{ allowAll ? 'Semua nomor diizinkan' : 'Whitelist aktif' }}
+        </span>
+      </div>
+
+      <div class="flex flex-col sm:flex-row gap-2 mt-3">
+        <input
+          v-model="allowedNumbers"
+          type="text"
+          placeholder="081234567890, 6285842041644"
+          class="flex-1 min-w-0 px-3 py-2 text-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          @keyup.enter="saveSettings"
+        />
+        <button
+          @click="saveSettings"
+          :disabled="savingNumbers"
+          class="px-4 py-2 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 disabled:opacity-60 text-white rounded-xl transition shrink-0"
+        >
+          {{ savingNumbers ? 'Menyimpan...' : 'Simpan' }}
+        </button>
+      </div>
+
+      <p v-if="numbersError" class="text-xs text-rose-600 dark:text-rose-400 mt-2 font-medium">{{ numbersError }}</p>
+      <p v-else-if="numbersSaved" class="text-xs text-emerald-600 dark:text-emerald-400 mt-2 font-medium">Tersimpan.</p>
     </div>
 
     <!-- Quick Stats Grid -->

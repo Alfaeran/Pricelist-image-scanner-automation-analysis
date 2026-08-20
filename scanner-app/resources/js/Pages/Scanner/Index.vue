@@ -85,7 +85,7 @@ const form = useForm({ message: "", images: [], locations: [], manual_timestamp:
 const selectedRegions = ref([]);
 const fileInput = ref(null);
 const chatContainer = ref(null);
-const sidebarOpen = ref(true);
+const sidebarOpen = ref(typeof window === "undefined" || window.innerWidth >= 1024);
 const sidebarTab = ref("history"); // 'history' | 'keys' | 'models'
 const isChatOpen = ref(false); // Controls chat popup visibility
 const inputType = ref('scan'); // 'scan' | 'data'
@@ -306,6 +306,12 @@ const getProviderColor = (providerName) => {
 };
 
 // Compute chart data based on raw data and selected metric
+// Branch list scoped to the chosen region, so the dropdown cannot offer a
+// branch that contradicts it.
+const trendBranchGroups = computed(() =>
+  trendRegion.value ? branchOptions.filter(g => g.group === trendRegion.value) : branchOptions
+);
+
 const trendChartData = computed(() => {
   if (!trendRawData.value || !trendRawData.value.labels) {
     return { labels: [], datasets: [] };
@@ -413,25 +419,24 @@ const trendChartOptions = {
 const fetchTrendData = async () => {
   trendLoading.value = true;
   try {
+    // toLocalDate, not toISOString: the backend compares against a local
+    // DATE(), and toISOString shifts to UTC - which in UTC+7 moves every
+    // date before 07:00 back a day and silently drops the boundary rows.
+    const toLocalDate = (v) => {
+      if (v instanceof Date) {
+        return v.getFullYear() + '-' + String(v.getMonth()+1).padStart(2, '0') + '-' + String(v.getDate()).padStart(2, '0');
+      }
+      return typeof v === 'string' ? v.substring(0, 10) : null;
+    };
+
     let start_date = null;
     let end_date = null;
-    if (trendDateRange.value && trendDateRange.value.length === 2) {
-      const s = trendDateRange.value[0];
-      const e = trendDateRange.value[1];
-      if (s instanceof Date) {
-        start_date = s.getFullYear() + '-' + String(s.getMonth()+1).padStart(2, '0') + '-' + String(s.getDate()).padStart(2, '0');
-      } else if (typeof s === 'string') {
-        start_date = s.substring(0, 10);
-      }
-      if (e instanceof Date) {
-        end_date = e.getFullYear() + '-' + String(e.getMonth()+1).padStart(2, '0') + '-' + String(e.getDate()).padStart(2, '0');
-      } else if (typeof e === 'string') {
-        end_date = e.substring(0, 10);
-      } else if (s && !e) {
-        // If only start date is selected in range, use today as end date
-        const today = new Date();
-        end_date = today.getFullYear() + '-' + String(today.getMonth()+1).padStart(2, '0') + '-' + String(today.getDate()).padStart(2, '0');
-      }
+    // VueDatePicker emits [start, null] while the user is mid-selection, so
+    // length === 2 was never true for a half-picked range and the filter did
+    // nothing until the second click.
+    if (Array.isArray(trendDateRange.value) && trendDateRange.value.length > 0) {
+      start_date = toLocalDate(trendDateRange.value[0]);
+      end_date = toLocalDate(trendDateRange.value[1]) || toLocalDate(new Date());
     }
 
     const res = await axios.get(route('api.trends'), {
@@ -609,38 +614,57 @@ const insightFilteredPackages = computed(() => {
     provider: normalizeProvider(pkg.provider)
   }));
   
-  if (insightTimeFilter.value === 'Semua Waktu') {
-    return pkgs;
-  }
+  // Determine whether time-based filtering is needed
+  const needsTimeFilter = insightTimeFilter.value !== 'Semua Waktu';
   
-  let maxTimestamp = new Date().getTime();
+  let referenceDate, startOfToday, startOfWeek, startOfMonth, startOfYear;
   
-  if (pkgs.length > 0) {
-    let maxTime = 0;
-    pkgs.forEach(pkg => {
-      const dateStr = pkg.image_timestamp ? pkg.image_timestamp.replace(' ', 'T') : null;
-      let pDate = dateStr ? new Date(dateStr) : null;
-      if (!pDate || isNaN(pDate.getTime())) {
-        pDate = new Date(pkg.created_at || (activeSession.value ? activeSession.value.created_at : new Date()));
-      }
-      if (pDate && !isNaN(pDate.getTime()) && pDate.getTime() > maxTime) {
-        maxTime = pDate.getTime();
-      }
-    });
-    if (maxTime > 0) maxTimestamp = maxTime;
-  }
+  if (needsTimeFilter) {
+    let maxTimestamp = new Date().getTime();
+    
+    if (pkgs.length > 0) {
+      let maxTime = 0;
+      pkgs.forEach(pkg => {
+        const dateStr = pkg.image_timestamp ? pkg.image_timestamp.replace(' ', 'T') : null;
+        let pDate = dateStr ? new Date(dateStr) : null;
+        if (!pDate || isNaN(pDate.getTime())) {
+          pDate = new Date(pkg.created_at || (activeSession.value ? activeSession.value.created_at : new Date()));
+        }
+        if (pDate && !isNaN(pDate.getTime()) && pDate.getTime() > maxTime) {
+          maxTime = pDate.getTime();
+        }
+      });
+      if (maxTime > 0) maxTimestamp = maxTime;
+    }
 
-  const referenceDate = new Date(maxTimestamp);
-  const startOfToday = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
-  
-  const startOfWeek = new Date(startOfToday);
-  const day = startOfWeek.getDay() || 7; 
-  startOfWeek.setDate(startOfWeek.getDate() - day + 1);
-  
-  const startOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
-  const startOfYear = new Date(referenceDate.getFullYear(), 0, 1);
+    referenceDate = new Date(maxTimestamp);
+    startOfToday = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), referenceDate.getDate());
+    
+    startOfWeek = new Date(startOfToday);
+    const day = startOfWeek.getDay() || 7; 
+    startOfWeek.setDate(startOfWeek.getDate() - day + 1);
+    
+    startOfMonth = new Date(referenceDate.getFullYear(), referenceDate.getMonth(), 1);
+    startOfYear = new Date(referenceDate.getFullYear(), 0, 1);
+  }
   
   return pkgs.filter(pkg => {
+    // Always filter out REJECTED packages
+    if (pkg.category === 'REJECTED') return false;
+    
+    // Always apply region filter
+    if (insightRegionFilter.value !== 'Semua Region' && pkg.region !== insightRegionFilter.value) {
+      return false;
+    }
+    
+    // Always apply branch filter
+    if (insightBranchFilter.value !== 'Semua Branch' && pkg.branch !== insightBranchFilter.value) {
+      return false;
+    }
+    
+    // Skip time-based filtering when "Semua Waktu" is selected
+    if (!needsTimeFilter) return true;
+    
     const dateStr = pkg.image_timestamp ? pkg.image_timestamp.replace(' ', 'T') : null;
     let pkgDate = dateStr ? new Date(dateStr) : null;
     
@@ -649,16 +673,6 @@ const insightFilteredPackages = computed(() => {
     }
     
     if (!pkgDate || isNaN(pkgDate.getTime())) return false;
-    
-    if (pkg.category === 'REJECTED') return false;
-    
-    if (insightRegionFilter.value !== 'Semua Region' && pkg.region !== insightRegionFilter.value) {
-      return false;
-    }
-    
-    if (insightBranchFilter.value !== 'Semua Branch' && pkg.branch !== insightBranchFilter.value) {
-      return false;
-    }
     
     if (insightTimeFilter.value === 'Hari Ini') {
       return pkgDate >= startOfToday;
@@ -2517,7 +2531,20 @@ onMounted(() => {
 watch(trendDateRange, () => {
   fetchTrendData();
 });
-watch([trendCircle, trendRegion, trendBranch], () => {
+// Changing region while a branch from a different region is still selected
+// sends an impossible pair (region=East Java, branch=Semarang) that matches
+// nothing. Clear the branch, and let that clear trigger the single fetch.
+watch(trendRegion, (region) => {
+  if (region && trendBranch.value) {
+    const group = branchOptions.find(g => g.group === region);
+    if (!group || !group.options.includes(trendBranch.value)) {
+      trendBranch.value = '';
+      return;
+    }
+  }
+  fetchTrendData();
+});
+watch([trendCircle, trendBranch], () => {
   fetchTrendData();
 });
 watch(trendFiles, () => {
@@ -2537,9 +2564,15 @@ onUnmounted(() => {
     class="h-screen flex bg-theme-page text-theme-text-primary font-sans overflow-hidden transition-colors duration-200"
   >
     <!-- SIDEBAR -->
+    <!-- Backdrop: below lg the sidebar overlays the content, so it needs a tap-to-close layer. -->
+    <div
+      v-if="sidebarOpen"
+      @click="sidebarOpen = false"
+      class="fixed inset-0 bg-black/40 z-30 lg:hidden"
+    ></div>
     <div
       :class="sidebarOpen ? 'w-72' : 'w-0 opacity-0'"
-      class="flex-shrink-0 bg-theme-brand-primary text-white flex flex-col transition-all duration-300 overflow-hidden border-r border-theme-brand-primary shadow-sm"
+      class="fixed inset-y-0 left-0 z-40 lg:static lg:z-auto flex-shrink-0 bg-theme-brand-primary text-white flex flex-col transition-all duration-300 overflow-hidden border-r border-theme-brand-primary shadow-sm"
     >
       <div
         class="h-16 px-4 border-b border-white/10 flex items-center justify-between shrink-0"
@@ -2827,7 +2860,7 @@ onUnmounted(() => {
     </div>
 
     <!-- MAIN AREA -->
-    <div class="flex-1 flex flex-col h-screen relative bg-theme-page transition-colors duration-200">
+    <div class="flex-1 min-w-0 flex flex-col h-screen relative bg-theme-page transition-colors duration-200">
       <!-- Topbar (Mobile Hamburger) -->
       <div
         class="h-16 flex items-center px-4 border-b border-theme-border-subtle shrink-0 bg-theme-surface"
@@ -2835,6 +2868,7 @@ onUnmounted(() => {
         <button
           v-if="!sidebarOpen"
           @click="sidebarOpen = true"
+          aria-label="Buka menu"
           class="p-2 hover:bg-black/5 dark:hover:bg-white/10 rounded-lg text-theme-text-secondary transition hover:text-theme-text-primary active:scale-[0.98] transition-transform"
         >
           <svg
@@ -2862,7 +2896,7 @@ onUnmounted(() => {
 
       <!-- DASHBOARD OUTPUT AREA -->
       <div
-        class="flex-1 overflow-y-auto px-6 py-8 scroll-smooth custom-scrollbar"
+        class="flex-1 overflow-y-auto px-3 py-4 sm:px-6 sm:py-8 scroll-smooth custom-scrollbar"
       >
         <div class="max-w-7xl mx-auto space-y-8 pb-20">
           <!-- EMPTY STATE / MAIN INPUT AREA -->
@@ -2886,22 +2920,22 @@ onUnmounted(() => {
             </div>
 
             <!-- Tabs -->
-            <div class="flex justify-center mb-8">
-              <div class="bg-theme-secondary p-1 rounded-xl inline-flex shadow-inner border border-theme-border-subtle">
-                <button @click="inputType = 'scan'" :class="inputType === 'scan' ? 'bg-theme-surface text-theme-brand-primary shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
-                  <div class="flex items-center gap-2">
+            <div class="flex justify-center mb-8 w-full">
+              <div class="bg-theme-secondary p-1 rounded-xl flex flex-col w-full sm:w-auto sm:flex-row sm:inline-flex shadow-inner border border-theme-border-subtle">
+                <button @click="inputType = 'scan'" :class="inputType === 'scan' ? 'bg-theme-surface text-theme-brand-primary shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-4 sm:px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
+                  <div class="flex items-center justify-center sm:justify-start gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
                     Scan Gambar (AI)
                   </div>
                 </button>
-                <button @click="inputType = 'data'" :class="inputType === 'data' ? 'bg-theme-surface text-theme-brand-primary shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
-                  <div class="flex items-center gap-2">
+                <button @click="inputType = 'data'" :class="inputType === 'data' ? 'bg-theme-surface text-theme-brand-primary shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-4 sm:px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
+                  <div class="flex items-center justify-center sm:justify-start gap-2">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                     Input Data Manual
                   </div>
                 </button>
-                <button @click="inputType = 'whatsapp'" :class="inputType === 'whatsapp' ? 'bg-theme-surface text-emerald-600 dark:text-emerald-400 shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
-                  <div class="flex items-center gap-2">
+                <button @click="inputType = 'whatsapp'" :class="inputType === 'whatsapp' ? 'bg-theme-surface text-emerald-600 dark:text-emerald-400 shadow-md' : 'text-theme-text-muted hover:text-theme-text-primary hover:bg-black/5 dark:hover:bg-white/5'" class="px-4 sm:px-6 py-2.5 rounded-lg text-sm font-bold transition-all duration-300 active:scale-[0.98] transition-transform">
+                  <div class="flex items-center justify-center sm:justify-start gap-2">
                     <svg class="w-4 h-4 text-emerald-500" fill="currentColor" viewBox="0 0 24 24"><path d="M12.012 2c-5.506 0-9.989 4.478-9.99 9.984 0 1.762.459 3.48 1.332 5.001l-1.416 5.176 5.297-1.389c1.474.803 3.146 1.226 4.774 1.227h.004c5.505 0 9.988-4.478 9.989-9.984 0-2.668-1.037-5.176-2.922-7.062-1.886-1.886-4.394-2.924-7.068-2.924zm5.7 14.167c-.244.688-1.42 1.314-1.961 1.378-.517.061-1.189.096-3.415-.815-2.845-1.163-4.664-4.043-4.806-4.234-.141-.191-1.149-1.528-1.149-2.914 0-1.386.726-2.068.984-2.35.258-.282.563-.353.751-.353.188 0 .376.002.54.01.176.009.412-.067.645.493.245.588.834 2.033.905 2.179.071.146.118.318.024.506-.094.188-.141.306-.282.471-.141.165-.297.369-.424.496-.141.141-.288.295-.124.577.165.282.732 1.205 1.571 1.954 1.079.963 1.989 1.261 2.271 1.402.282.141.447.118.612-.071.165-.188.705-.823.893-1.105.188-.282.376-.235.635-.141.258.094 1.644.775 1.926.916.282.141.47.211.54.329.07.117.07.681-.175 1.369z"/></svg>
                     WhatsApp Bot (AI)
                   </div>
@@ -2947,11 +2981,11 @@ onUnmounted(() => {
                   <div class="w-16 h-16 bg-green-500/10 rounded-full flex items-center justify-center mb-4">
                     <svg class="anime-svg-draw w-8 h-8 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                   </div>
-                  <h3 class="text-xl font-bold text-slate-800 dark:text-slate-900 mb-2">{{ form.images.length }} File Terpilih</h3>
-                  
+                  <h3 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">{{ form.images.length }} File Terpilih</h3>
+
                   <!-- Progress Bar -->
                   <div class="w-full max-w-md mt-0 mb-4 pointer-events-auto">
-                    <div class="flex justify-between text-sm text-slate-500 mb-2 dark:text-slate-900">
+                    <div class="flex justify-between text-sm text-slate-500 mb-2 dark:text-slate-300">
                       <span>Ukuran: {{ formatBytes(totalFileSize) }}</span>
                       <span>Batas: 100 MB</span>
                     </div>
@@ -2967,14 +3001,14 @@ onUnmounted(() => {
 
                   <!-- File List with Location Selectors -->
                   <div class="w-full max-w-md mb-2 flex flex-col pointer-events-auto">
-                    <label class="text-xs text-slate-500 mb-1 dark:text-slate-900 text-center">Pilih Lokasi (Opsional)</label>
+                    <label class="text-xs text-slate-500 mb-1 dark:text-slate-300 text-center">Pilih Lokasi (Opsional)</label>
                     <div class="w-full max-h-40 overflow-y-auto pr-2 bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 p-2 shadow-inner">
                       <div v-for="(file, index) in form.images" :key="index" class="flex flex-col mb-3 pb-3 border-b border-slate-100 dark:border-slate-700 last:mb-0 last:pb-0 last:border-0">
                         <div class="text-sm font-medium text-slate-700 dark:text-slate-300 truncate mb-1" :title="file.name">
                           {{ file.name }}
                         </div>
                         <div class="flex flex-col sm:flex-row gap-2 w-full mt-0">
-                        <select v-model="selectedRegions[index]" @change="form.locations[index] = ''" class="flex-1 text-xs bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
+                        <select v-model="selectedRegions[index]" @change="form.locations[index] = ''" class="flex-1 text-xs bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
                           <option value="">-- Pilih Region --</option>
                           <option v-for="group in branchOptions" :key="group.group" :value="group.group">{{ group.group }}</option>
                         </select>
@@ -2985,7 +3019,7 @@ onUnmounted(() => {
                             :list="'branch-list-' + index" 
                             :disabled="!selectedRegions[index]"
                             placeholder="-- Ketik / Pilih Branch --"
-                            class="w-full text-xs bg-slate-50 dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                            class="w-full text-xs bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-400 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
                           >
                           <datalist :id="'branch-list-' + index">
                             <template v-if="selectedRegions[index]">
@@ -3000,8 +3034,8 @@ onUnmounted(() => {
 
                   <!-- Timestamp Override -->
                   <div class="w-full max-w-xs mt-1 mb-2 flex flex-col pointer-events-auto">
-                    <label class="text-xs text-slate-500 mb-1 dark:text-slate-900">Atur Waktu (Opsional)</label>
-                    <input type="date" v-model="form.manual_timestamp" class="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-800 px-3 py-2 focus:ring-primary dark:focus:ring-indigo-500 focus:border-primary dark:focus:border-indigo-500 text-center shadow-sm">
+                    <label class="text-xs text-slate-500 mb-1 dark:text-slate-300">Atur Waktu (Opsional)</label>
+                    <input type="date" v-model="form.manual_timestamp" class="w-full bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 rounded-lg text-sm text-slate-800 dark:text-slate-100 dark:[color-scheme:dark] px-3 py-2 focus:ring-primary dark:focus:ring-indigo-500 focus:border-primary dark:focus:border-indigo-500 text-center shadow-sm">
                   </div>
 
                   <div class="flex gap-4 mt-3 pointer-events-auto">
@@ -3060,12 +3094,12 @@ onUnmounted(() => {
                   <div class="w-16 h-16 bg-theme-brand-primary/10 rounded-full flex items-center justify-center mb-4">
                     <svg class="anime-svg-draw w-8 h-8 text-secondary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
                   </div>
-                  <h3 class="text-xl font-bold text-slate-800 dark:text-slate-900 mb-2">{{ uploadDataForm.data_file.name }}</h3>
+                  <h3 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-2">{{ uploadDataForm.data_file.name }}</h3>
                   
                   <!-- Timestamp Override -->
                   <div class="w-full max-w-xs mt-1 mb-2 flex flex-col pointer-events-auto">
                     <label class="text-[11px] text-theme-text-secondary mb-1">Atur Waktu (Opsional)</label>
-                    <input type="date" v-model="uploadDataForm.manual_timestamp" class="w-full bg-theme-surface border border-theme-border-default rounded-lg text-sm text-theme-text-primary px-3 py-2 focus:ring-theme-brand-secondary focus:border-theme-brand-secondary text-center shadow-sm">
+                    <input type="date" v-model="uploadDataForm.manual_timestamp" class="w-full bg-theme-surface border border-theme-border-default rounded-lg text-sm text-theme-text-primary dark:[color-scheme:dark] px-3 py-2 focus:ring-theme-brand-secondary focus:border-theme-brand-secondary text-center shadow-sm">
                   </div>
                   
                   <div class="w-full max-w-xs mb-2 flex flex-col pointer-events-auto">
@@ -3125,12 +3159,12 @@ onUnmounted(() => {
           <template v-else>
             <!-- Top Action Bar -->
             <div
-              class="flex justify-between items-center bg-white dark:bg-primary p-4 rounded-2xl border border-slate-200 dark:border-black shadow-sm mb-6"
+              class="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 bg-white dark:bg-primary p-4 rounded-2xl border border-slate-200 dark:border-black shadow-sm mb-6"
             >
-              <h2 class="text-xl font-bold text-slate-800 dark:text-slate-900">
+              <h2 class="text-lg sm:text-xl font-bold text-slate-800 dark:text-slate-900 break-all">
                 {{ activeSession.filename }}
               </h2>
-              <div class="flex gap-3 items-center">
+              <div class="flex flex-wrap gap-3 items-center">
                 <label
                   class="cursor-pointer px-4 py-2 bg-theme-surface border border-theme-border-default text-theme-text-primary hover:bg-theme-secondary rounded-lg text-sm font-medium transition flex items-center gap-2 shadow-sm"
                   :class="{
@@ -3564,9 +3598,9 @@ onUnmounted(() => {
                 <div class="mt-8 pt-8 border-t border-slate-200">
                   <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 gap-4">
                     <h4 class="text-sm font-bold text-slate-800 uppercase tracking-wider">Market Summarize</h4>
-                    <div class="flex flex-col sm:flex-row items-end sm:items-center gap-3">
-                      <div class="flex items-center gap-3">
-                        <div v-if="insightTimeFilter === 'Rentang Waktu'" class="flex items-center gap-2">
+                    <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 w-full sm:w-auto">
+                      <div class="flex flex-wrap items-center gap-3">
+                        <div v-if="insightTimeFilter === 'Rentang Waktu'" class="flex flex-wrap items-center gap-2">
                           <input type="date" v-model="insightStartDate" class="bg-white text-sm text-slate-800 border border-slate-300 rounded-md px-3 py-1.5 focus:outline-none focus:border-indigo-500 shadow-sm" />
                           <span class="text-slate-400">-</span>
                           <input type="date" v-model="insightEndDate" class="bg-white text-sm text-slate-800 border border-slate-300 rounded-md px-3 py-1.5 focus:outline-none focus:border-indigo-500 shadow-sm" />
@@ -3781,8 +3815,8 @@ onUnmounted(() => {
                 <div class="lg:col-span-4 bg-transparent p-2 flex flex-col relative overflow-hidden">
                   <h5 class="text-xs font-bold text-slate-800 uppercase tracking-wider mb-1 text-center">Competitive Heatmap</h5>
                   <p class="text-[10px] text-slate-400 text-center mb-4 italic">(By Minimum Yield Rp/GB & Overall Score)</p>
-                  <div class="flex-grow flex flex-col justify-center">
-                    <table class="w-full text-left border-collapse">
+                  <div class="flex-grow flex flex-col justify-center overflow-x-auto -mx-2 px-2">
+                    <table class="w-full min-w-[420px] text-left border-collapse">
                       <thead>
                         <tr>
                           <th class="p-1 border-b border-slate-200 text-slate-500 font-bold text-[10px]">Provider</th>
@@ -3905,7 +3939,7 @@ onUnmounted(() => {
                 </div>
                 <p class="text-xs text-slate-500 mt-1 font-medium">Grouped by end-user price. Lower yield = better Rp/GB (more aggressive pricing).</p>
               </div>
-              <div class="h-[420px] w-full border border-slate-200 rounded-xl p-4 bg-white shadow-xs">
+              <div class="h-[260px] sm:h-[340px] lg:h-[420px] w-full border border-slate-200 rounded-xl p-2 sm:p-4 bg-white shadow-xs">
                 <Scatter
                   v-if="monthlyYieldChartData.datasets.length > 0"
                   :data="monthlyYieldChartData"
@@ -3930,7 +3964,7 @@ onUnmounted(() => {
                 </div>
                 <p class="text-xs text-slate-500 mt-1 font-medium">Grouped by validity days (1d–19d). Short validity usually carries higher Rp/GB.</p>
               </div>
-              <div class="h-[420px] w-full border border-slate-200 rounded-xl p-4 bg-white shadow-xs">
+              <div class="h-[260px] sm:h-[340px] lg:h-[420px] w-full border border-slate-200 rounded-xl p-2 sm:p-4 bg-white shadow-xs">
                 <Scatter
                   v-if="sachetYieldChartData.datasets.length > 0"
                   :data="sachetYieldChartData"
@@ -4031,12 +4065,12 @@ onUnmounted(() => {
                   
                   <select v-model="trendBranch" class="bg-white text-slate-800 border border-slate-300 rounded-lg text-xs font-bold py-1.5 px-3 focus:ring-blue-500 focus:border-blue-500 shadow-sm max-w-[140px] truncate transition active:scale-[0.98]">
                     <option value="">Semua Branch</option>
-                    <optgroup v-for="group in branchOptions" :key="group.group" :label="group.group">
+                    <optgroup v-for="group in trendBranchGroups" :key="group.group" :label="group.group">
                       <option v-for="opt in group.options" :key="opt" :value="opt">{{ opt }}</option>
                     </optgroup>
                   </select>
                   
-                  <div class="relative min-w-[160px]">
+                  <div class="relative w-full sm:w-auto sm:min-w-[160px]">
                     <button @click="isTrendFileFilterOpen = !isTrendFileFilterOpen" class="w-full text-left bg-white text-xs font-bold text-slate-800 border border-slate-300 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 shadow-sm flex justify-between items-center transition active:scale-[0.98]">
                       <span class="truncate">{{ trendFiles.length === 0 ? 'Semua File' : trendFiles.length + ' File' }}</span>
                       <svg class="w-4 h-4 text-slate-500 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
@@ -4056,14 +4090,14 @@ onUnmounted(() => {
                     </div>
                   </div>
                 </div>
-                <div class="flex items-center gap-2 min-w-[280px]">
+                <div class="flex items-center gap-2 w-full sm:w-auto sm:min-w-[280px]">
                   <VueDatePicker
                     v-model="trendDateRange"
                     range
                     multi-calendars
                     :enable-time-picker="false"
                     placeholder="Pilih Rentang Waktu"
-                    class="w-64"
+                    class="w-full sm:w-64"
                   />
                 </div>
               </div>
@@ -4159,7 +4193,7 @@ onUnmounted(() => {
                     filteredPackagesList.length
                   }} dari {{ activeSession.packages.length }} paket)
                 </h3>
-                <div class="flex items-stretch gap-3">
+                <div class="flex flex-wrap items-stretch gap-3">
                   <div
                     v-if="activeSession.performance_metrics"
                     class="hidden md:flex items-center gap-2 text-[10px] bg-slate-100 rounded-lg px-2 py-1 border border-slate-200 my-auto shadow-xs"
@@ -4480,7 +4514,7 @@ onUnmounted(() => {
                   ]"
                 >
                   <table
-                    class="w-full text-sm text-left text-slate-700"
+                    class="w-full min-w-[720px] text-sm text-left text-slate-700"
                   >
                     <thead
                       class="text-[11px] text-theme-text-secondary uppercase bg-theme-secondary border-b border-theme-border-subtle font-bold"
@@ -4880,7 +4914,7 @@ onUnmounted(() => {
                   ></div>
                   Data Produk Baseline ({{ baselineProducts.length }} produk)
                 </h3>
-                <div class="flex items-stretch gap-3">
+                <div class="flex flex-wrap items-stretch gap-3">
                   <button
                     @click="toggleEditBaselineTable"
                     class="text-xs px-3 py-1.5 bg-slate-100 hover:bg-slate-200 rounded-md text-slate-700 font-semibold transition border border-slate-300 flex items-center justify-center h-full text-center shadow-xs active:scale-[0.98] transition-transform"
@@ -4998,8 +5032,8 @@ onUnmounted(() => {
               <div class="flex items-center gap-2 mb-4">
                 <h3 class="text-lg font-bold text-theme-semantic-danger">Paket Ditolak (Anomali Harga/Kuota/Hari)</h3>
               </div>
-              <div class="bg-theme-semantic-danger/5 border border-theme-semantic-danger/20 rounded-xl overflow-hidden shadow-sm">
-                <table class="w-full text-left border-collapse text-sm">
+              <div class="bg-theme-semantic-danger/5 border border-theme-semantic-danger/20 rounded-xl overflow-x-auto shadow-sm">
+                <table class="w-full min-w-[640px] text-left border-collapse text-sm">
                   <thead>
                     <tr class="bg-theme-semantic-danger/10 text-theme-text-primary border-b border-theme-semantic-danger/20">
                       <th class="px-4 py-3 font-semibold uppercase tracking-wider text-[11px]">Provider</th>
@@ -5594,7 +5628,7 @@ onUnmounted(() => {
                     {{ file.name }}
                   </div>
                   <div class="flex flex-col sm:flex-row gap-2 w-full mt-0">
-                    <select v-model="selectedRegions[index]" @change="form.locations[index] = ''" class="flex-1 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
+                    <select v-model="selectedRegions[index]" @change="form.locations[index] = ''" class="flex-1 text-xs bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
                       <option value="">-- Pilih Region --</option>
                       <option v-for="group in branchOptions" :key="group.group" :value="group.group">{{ group.group }}</option>
                     </select>
@@ -5605,7 +5639,7 @@ onUnmounted(() => {
                         :list="'branch-list-modal-' + index" 
                         :disabled="!selectedRegions[index]"
                         placeholder="-- Ketik / Pilih Branch --"
-                        class="w-full text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                        class="w-full text-xs bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-400 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                       <datalist :id="'branch-list-modal-' + index">
                         <template v-if="selectedRegions[index]">
@@ -5634,7 +5668,7 @@ onUnmounted(() => {
               <label class="text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1">Pilih Lokasi (Opsional)</label>
               <div class="w-full bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-700 p-2 shadow-inner">
                 <div class="flex flex-col sm:flex-row gap-2 w-full mt-0">
-                  <select v-model="selectedRegions[0]" @change="form.locations[0] = ''" class="flex-1 text-xs bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
+                  <select v-model="selectedRegions[0]" @change="form.locations[0] = ''" class="flex-1 text-xs bg-white dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-600 rounded px-2 py-1.5 focus:ring-primary focus:border-primary">
                     <option value="">-- Pilih Region --</option>
                     <option v-for="group in branchOptions" :key="group.group" :value="group.group">{{ group.group }}</option>
                   </select>
@@ -5672,7 +5706,7 @@ onUnmounted(() => {
               v-else 
               type="date" 
               v-model="form.manual_timestamp" 
-              class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-800 dark:text-slate-100 px-3 py-2 focus:ring-primary focus:border-primary"
+              class="w-full bg-white dark:bg-slate-700 border border-slate-300 dark:border-slate-600 rounded-lg text-sm text-slate-800 dark:text-slate-100 dark:[color-scheme:dark] px-3 py-2 focus:ring-primary focus:border-primary"
             />
           </div>
         </div>
@@ -5709,7 +5743,7 @@ onUnmounted(() => {
         
         <div class="p-6 space-y-6">
           <!-- Edit Form -->
-          <div class="grid grid-cols-2 gap-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label class="block text-xs font-bold text-slate-700 mb-1 uppercase">Provider</label>
               <input v-model="editModalPkg.provider" class="w-full bg-white border border-slate-300 rounded-md px-3 py-2 text-sm text-slate-800 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 outline-none transition shadow-sm" />

@@ -540,6 +540,11 @@ class ScannerController extends Controller
                 elseif ($days <= 15) $category = 'Mingguan';
                 elseif ($price > 100000) $category = 'Bulanan (Premium/Jumbo)';
 
+                // Location filters on /api/trends query circle/region/branch,
+                // not image_location, so rows imported here were invisible to
+                // every location filter until these were populated too.
+                $locDetails = \App\Models\ExtractedPackage::locationDetails($location);
+
                 \App\Models\ExtractedPackage::create([
                     'pricelist_id' => $pricelist->id,
                     'provider' => $provider,
@@ -553,6 +558,9 @@ class ScannerController extends Controller
                     'product_type' => 'Data',
                     'image_timestamp' => $manualTimestamp,
                     'image_location' => $location,
+                    'circle' => $locDetails['circle'],
+                    'region' => $locDetails['region'],
+                    'branch' => $locDetails['branch'],
                 ]);
             }
         });

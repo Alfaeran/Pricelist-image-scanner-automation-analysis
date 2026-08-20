@@ -25,3 +25,6 @@ data/chatbot_test_results.json
 
 # Local composer artifacts (manually downloaded packages, bypassing Defender-blocked auto-download)
 .composer-artifacts/
+
+# Cygwin/Git-Bash crash dumps
+*.stackdump
