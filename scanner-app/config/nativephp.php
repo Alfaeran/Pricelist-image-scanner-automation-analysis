@@ -135,7 +135,14 @@ return [
     | install Python themselves. Set NATIVEPHP_PYTHON_PATH to override.
     */
     'python_venv' => [
-        base_path('venv/Scripts/python.exe'),   // Windows
+        // The embedded runtime comes first on purpose. venv/Scripts/python.exe
+        // is only a shim that reads pyvenv.cfg to find a real interpreter on
+        // the machine that built it, so on a user's PC it resolves to nothing
+        // and the app quietly falls back to a system Python. app:embed-python
+        // puts a full interpreter here, which is what makes the installer
+        // work without asking the user to install Python at all.
+        base_path('venv/runtime/python.exe'),   // Windows, embedded
+        base_path('venv/Scripts/python.exe'),   // Windows, developer venv
         base_path('venv/bin/python'),           // macOS / Linux
     ],
 
@@ -211,6 +218,7 @@ return [
     'prebuild' => [
         'npm run build',
         'php artisan app:bundle-python',
+        'php artisan app:embed-python',
     ],
 
     'postbuild' => [

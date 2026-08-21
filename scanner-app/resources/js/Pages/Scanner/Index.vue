@@ -2452,13 +2452,17 @@ const availableModels = ref([
 
 // ─── Lifecycle ────────────────────────────────────────────────────
 let pollTimer = null;
+
+// Anything not in this list is treated as still running. Listing the terminal
+// states instead of the busy ones matters because the backend also writes
+// free-text progress strings ("Mengekstrak data dari gambar..."), and those
+// change as the pipeline moves along - a busy-list would have to be kept in
+// sync with every new message, and a missed one leaves the row frozen.
+const TERMINAL_STATUSES = ["processed", "success", "failed", "error", "cancelled"];
+
 const pollStatus = () => {
-  const hasPending = props.pricelists.some((l) =>
-    [
-      "pending",
-      "processing",
-      "Menyusun insight & benchmarking...",
-    ].includes(l.status) || (l.status && l.status.includes("Mengekstrak data dari gambar"))
+  const hasPending = props.pricelists.some(
+    (l) => l.status && !TERMINAL_STATUSES.includes(l.status)
   );
 
   if (hasPending) {
@@ -2774,6 +2778,19 @@ onUnmounted(() => {
               class="bg-white text-slate-900 text-sm px-2 py-1 rounded border border-blue-500 outline-none w-full shadow-inner"
             />
             <span v-else class="truncate">{{ list.filename }}</span>
+
+            <!-- A failed scan used to be indistinguishable from a finished one
+                 here: the reason only appeared after opening the session. -->
+            <span
+              v-if="['failed', 'error'].includes(list.status)"
+              class="shrink-0 w-2 h-2 rounded-full bg-red-500"
+              :title="list.error_message || 'Gagal diproses'"
+            ></span>
+            <span
+              v-else-if="!TERMINAL_STATUSES.includes(list.status)"
+              class="shrink-0 w-2 h-2 rounded-full bg-amber-400 animate-pulse"
+              :title="list.status"
+            ></span>
           </div>
 
           <div
@@ -3388,7 +3405,7 @@ onUnmounted(() => {
 
             <!-- Error State Processing -->
             <div
-              v-if="activeSession.status === 'failed'"
+              v-if="['failed', 'error'].includes(activeSession.status)"
               class="bg-red-50/90 border border-red-200 rounded-2xl p-6 flex items-start gap-4 mb-6 shadow-sm"
             >
               <svg
@@ -3409,11 +3426,11 @@ onUnmounted(() => {
                   Gagal Memproses Data
                 </h4>
                 <p class="text-red-600 mb-4">
-                  {{ activeSession.error_message }}
+                  {{ activeSession.error_message || "Proses berhenti tanpa keterangan. Coba ulangi, atau periksa apakah mesin AI sedang berjalan." }}
                 </p>
                 <button
                   @click="retryScan(activeSession.id)"
-                  class="px-4 py-2 bg-red-600 text-slate-800 hover:bg-red-700 rounded-lg transition flex items-center gap-2 font-semibold shadow-sm active:scale-[0.98] transition-transform"
+                  class="px-4 py-2 bg-red-600 text-white hover:bg-red-700 rounded-lg transition flex items-center gap-2 font-semibold shadow-sm active:scale-[0.98] transition-transform"
                   :disabled="retryLoading[activeSession.id]"
                 >
                   <svg
