@@ -166,6 +166,15 @@ return [
     // OUR accounts, not the user's, so they are stripped. Gemini keys are not
     // listed because they live in the api_keys table, entered per install.
     'cleanup_env_keys' => [
+        // APP_DEBUG=true is what we want locally and exactly what we do not
+        // want shipped. With debug on, NativePHP skips rewriteStoragePath()
+        // and points rewriteDatabase() at a database INSIDE the install
+        // folder, so every update wipes the user's data - and stack traces
+        // get shown to end users. Stripping these two lets Laravel fall back
+        // to its own defaults (production / false), which is correct here.
+        'APP_ENV',
+        'APP_DEBUG',
+        'TELESCOPE_ENABLED',
         'WHATSAPP_*',
         'MAIL_PASSWORD',
         'MAIL_USERNAME',

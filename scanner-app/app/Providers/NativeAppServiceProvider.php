@@ -81,7 +81,7 @@ class NativeAppServiceProvider implements ProvidesPhpIni
             Log::info("[NativeApp] Created SQLite database at: {$dbPath}");
         }
 
-        $this->runPendingMigrations();
+        $this->runPendingMigrations($connection);
     }
 
     /**
@@ -91,7 +91,7 @@ class NativeAppServiceProvider implements ProvidesPhpIni
      * can be a schema behind after the user installs an app update. Both leave
      * the app querying tables that do not exist, so migrate before serving.
      */
-    protected function runPendingMigrations(): void
+    protected function runPendingMigrations(string $connection): void
     {
         try {
             if (!Schema::hasTable('migrations')) {
@@ -105,7 +105,21 @@ class NativeAppServiceProvider implements ProvidesPhpIni
             }
 
             if ($pending) {
-                Artisan::call('migrate', ['--force' => true]);
+                // Telescope's migration ignores database.default and reads its
+                // own config, which is baked from DB_CONNECTION ('sqlite') and
+                // points at a file the installer does not ship. Redirect it at
+                // the real connection or the whole migration run dies on it.
+                config(['telescope.storage.database.connection' => $connection]);
+
+                // --database is not optional here. Artisan::call() boots a fresh
+                // kernel that never runs NativeServiceProvider::boot(), so
+                // database.default reverts to the .env value ('sqlite') and the
+                // migration targets a file that does not exist inside the
+                // installer. Naming the connection keeps it on the real database.
+                Artisan::call('migrate', [
+                    '--force' => true,
+                    '--database' => $connection,
+                ]);
                 Log::info('[NativeApp] Applied pending migrations: ' . trim(Artisan::output()));
             }
         } catch (\Throwable $e) {

@@ -15,6 +15,15 @@ class TelescopeServiceProvider extends TelescopeApplicationServiceProvider
      */
     public function register(): void
     {
+        // Telescope is a developer tool and has no place in the packaged
+        // desktop app: it records every request, query, and job into a
+        // database the installer does not ship, so its writes fail against a
+        // nonexistent file and bury the real error behind a Telescope stack
+        // trace. Bail out before any watcher is registered.
+        if (config('nativephp-internal.running')) {
+            return;
+        }
+
         // Telescope::night();
 
         $this->hideSensitiveRequestDetails();
