@@ -16,7 +16,12 @@ return [
     |
     */
 
-    'enabled' => env('TELESCOPE_ENABLED', true),
+    // NATIVEPHP_RUNNING is the desktop gate. Telescope is a local debugging
+    // tool with no place in a shipped app: it defaults to enabled, and its
+    // storage connection is read from DB_CONNECTION rather than the live
+    // one, so in a packaged build it writes at a path inside the install
+    // folder that does not exist and every request raises a PHP dialog.
+    'enabled' => env('TELESCOPE_ENABLED', true) && ! env('NATIVEPHP_RUNNING', false),
 
     /*
     |--------------------------------------------------------------------------
