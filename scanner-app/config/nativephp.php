@@ -217,6 +217,19 @@ return [
         // file - a .bak left over from a migration, say - gets shipped to
         // every downloader along with whatever rows it happens to hold.
         'database/*.sqlite*',
+        // cleanup_env_keys only sanitises .env itself. Any other dotenv file -
+        // a .backup, a .local, a .env.production kept while switching drivers -
+        // is copied verbatim, secrets and all. v1.0.2 shipped .env.backup-pgsql
+        // this way. Only .env and .env.example are ever wanted in a build.
+        '.env.backup*',
+        '.env.local',
+        '.env.*.local',
+        '.env.production',
+        '.env.staging',
+        '.env.testing',
+        '.env.bak*',
+        '*.stackdump',
+        '.phpunit.result.cache',
     ],
 
     // Ship the Python pipeline and a freshly built frontend with the app.
