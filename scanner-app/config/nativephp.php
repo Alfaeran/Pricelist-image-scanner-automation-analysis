@@ -212,6 +212,11 @@ return [
         'content',
         'node_modules',
         '*/tests',
+        // The app creates its database in AppData at first boot, so nothing
+        // under database/ belongs in the installer. Without this a stray dev
+        // file - a .bak left over from a migration, say - gets shipped to
+        // every downloader along with whatever rows it happens to hold.
+        'database/*.sqlite*',
     ],
 
     // Ship the Python pipeline and a freshly built frontend with the app.
